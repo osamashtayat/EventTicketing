@@ -1,0 +1,44 @@
+@EventTicketingApi_HostAddress = http://localhost:5066
+
+GET {{EventTicketingApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+
+GET {{EventTicketingApi_HostAddress}}/api/countries
+Accept: application/json
+
+###
+
+GET {{EventTicketingApi_HostAddress}}/api/countries/1
+Accept: application/json
+
+###
+
+GET {{EventTicketingApi_HostAddress}}/api/countries/by-name?name=Jordan
+Accept: application/json
+
+### Create a country in the local development database
+
+POST {{EventTicketingApi_HostAddress}}/api/countries
+Content-Type: application/json
+
+{
+  "name": "Jordan",
+  "shortName": "JO"
+}
+
+### Update: replace both IDs with the ID returned by POST
+
+PUT {{EventTicketingApi_HostAddress}}/api/countries/1
+Content-Type: application/json
+
+{
+  "id": 1,
+  "name": "Jordan",
+  "shortName": "JO"
+}
+
+### Delete: use an existing country ID without associated venues
+
+DELETE {{EventTicketingApi_HostAddress}}/api/countries/1

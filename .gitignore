@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+
+# .NET build outputs
+**/bin/
+**/obj/
+**/TestResults/
+*.user
+*.suo
+.vs/
+
+# Local OS files and credentials
+.DS_Store
+.aws/
+*.pfx
+*.p12
+*.key
+secrets.json
