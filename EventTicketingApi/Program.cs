@@ -1,3 +1,4 @@
+using EventTicketingApi.ExceptionHandling;
 using EventTicketingApi.Infrastructure.Persistence;
 using EventTicketingApi.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
@@ -12,14 +13,20 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddOpenApi();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddAutoMapper(
     cfg => { },
     typeof(CountryMappingProfile).Assembly);
-    builder.Services.AddControllers(); 
+    builder.Services.AddControllers();
 
 builder.Services.AddScoped<ICountriesService, CountryService>();
 builder.Services.AddScoped<IVenuesService, VenueService>();
+builder.Services.AddScoped<IEventsService, EventService>();
+builder.Services.AddScoped<ITicketCategoriesService, TicketCategoryService>();
 var app = builder.Build();
+
+app.UseExceptionHandler();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -48,7 +55,7 @@ app.MapGet("/weatherforecast", () =>
     return forecast;
 })
 .WithName("GetWeatherForecast");
-app.MapControllers(); 
+app.MapControllers();
 app.Run();
 
 record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)

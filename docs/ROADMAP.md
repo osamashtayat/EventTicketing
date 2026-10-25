@@ -40,8 +40,15 @@ paths. Treat anonymous write endpoints as a local learning stage until Phase 2.
 
 ### 1.3 Discovery
 
-- [ ] Add keyword search, location/classification filters, and stable pagination.
-- [ ] Define allowed sorting, page-size bounds, and empty-result behavior.
+Implemented baseline before accounts/authentication: reusable Application
+`PagedResult<T>` and PageQuery plus resource-specific queries for countries, venues,
+and events. Filters run before SQL count/paging, with page-size bounds and stable
+ordering. SQL Server/HTTP checks passed; richer sort/classification filters remain
+future work.
+
+- [x] Add text/location filters and stable pagination for current list endpoints.
+- [ ] Add event classification filtering after a classification model is agreed.
+- [x] Define deterministic sorting, page-size bounds, and empty-result behavior.
 
 Complete when combined filters and page boundaries are verified, query execution
 is bounded, and request/response examples describe the actual API.
@@ -86,6 +93,10 @@ or release inventory twice. Verify using a controllable clock and database integ
 
 - [ ] Expand unit/integration coverage and add CI once the repository workflow is ready.
 - [ ] Improve exception handling, structured logging, and operational diagnostics.
+
+Baseline now implemented: central HTTP exception handling and console error logging
+with trace IDs, plus service-result logging. Further logging sinks, background-job handling, and operational
+monitoring remain future work; this does not complete the reliability milestone.
 - [ ] Review transaction boundaries and failure recovery under concurrent load.
 
 Complete when failures produce useful responses/logs without secrets, automated

@@ -5,8 +5,9 @@
 This is an educational C# backend and portfolio project for discovering events,
 managing venues and ticket categories, and booking tickets. Help the developer
 learn by explaining the relevant concept, a small next step, and its trade-offs.
-Default to guidance and review; generate complete features only when explicitly
-requested. Implement only the requested slice and current milestone. Ask before
+Implement requested changes by default unless the developer asks for explanation
+or review only. For users and authentication, default to guidance and review while
+the developer implements them. Implement only the requested slice and current milestone. Ask before
 significant architectural changes or work outside the current phase.
 
 ## Current stack and boundaries

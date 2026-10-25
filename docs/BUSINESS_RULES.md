@@ -1,8 +1,35 @@
 # Business rules
 
-No rules below are implemented yet. The requested capabilities are the product
-direction; detailed policies below are **proposed defaults** to review before their
-milestone. Open questions must be resolved before dependent code is written.
+The event CRUD service now validates required input, positive capacity, valid date
+order, venue existence, and route/body ID agreement. It rejects a capacity below
+existing ticket-category allocations and deletion while categories exist. Event
+names may repeat. Category create/update and event capacity updates now use serializable
+transactions for allocation checks and writes. Event create/update now also requires capacity no
+greater than the selected venue's capacity (400, `Event.ExceedsVenueCapacity`).
+Venue updates reject a capacity below any existing event there (409,
+`Venue.CapacityBelowEvent`). Equality is allowed in both directions. Compare
+against each event, not the sum of capacities across events, since events can
+occur at different times. These are service-level checks, not database constraints
+or guarantees against simultaneous event/venue changes.
+
+The remaining detailed policies below are **proposed defaults**, not all implemented
+or accepted. Review them before their milestone. Open questions must be resolved
+before dependent code is written.
+
+## Implemented ticket-category rules
+
+- Create/update requires an existing event, nonempty name, positive category capacity,
+  and a nonnegative price that fits decimal(18,2). Reject additional fractional digits
+  rather than silently rounding them. Zero price is valid; currency is not yet modeled.
+- Sum of category capacities cannot exceed event capacity. Exclude the current category
+  on updates and check the destination event if EventId changes. Equality is valid.
+- Use a serializable transaction across the allocation check and save; event capacity
+  updates participate in the same isolation boundary. Aborted transactions are rolled
+  back; automatic deadlock retry is not implemented.
+- Category deletion is currently allowed because bookings do not exist. Add booking
+  history/issued-ticket safeguards before introducing those capabilities.
+- Category names may repeat. List filtering is by event, name/description, and inclusive
+  price range; page rules reuse the shared query and result types.
 
 ## Events, venues, and ticket categories
 

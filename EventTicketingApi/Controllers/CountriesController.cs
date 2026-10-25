@@ -1,3 +1,4 @@
+using EventTicketingApi.Application.DTOs.Common;
 using EventTicketingApi.Application.Contracts;
 using EventTicketingApi.Application.DTOs.Countries;
 using EventTicketingApi.Common.Results;
@@ -10,10 +11,10 @@ namespace EventTicketingApi.Controllers;
 public class CountriesController(ICountriesService countriesService) : BaseApiController
 {
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<CountrySummaryDto>>> GetCountries(
-        CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResult<CountrySummaryDto>>> GetCountries(
+        [FromQuery] CountryQuery query, CancellationToken cancellationToken)
     {
-        var result = await countriesService.GetCountriesAsync(cancellationToken);
+        var result = await countriesService.GetCountriesAsync(query, cancellationToken);
         return result.IsSuccess
             ? Ok(result.Value)
             : FailureResponse(result.FailureKind, result.Errors);

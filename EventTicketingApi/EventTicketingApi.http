@@ -42,3 +42,123 @@ Content-Type: application/json
 ### Delete: use an existing country ID without associated venues
 
 DELETE {{EventTicketingApi_HostAddress}}/api/countries/1
+
+### Create venue: use an existing country ID
+
+POST {{EventTicketingApi_HostAddress}}/api/venues
+Content-Type: application/json
+
+{
+  "name": "Royal Hall",
+  "city": "Amman",
+  "address": "Main Street",
+  "countryId": 1,
+  "capacity": 100
+}
+
+### Get venue: replace ID with the one returned by POST
+
+GET {{EventTicketingApi_HostAddress}}/api/venues/1
+
+### Update venue: route and body IDs must match
+
+PUT {{EventTicketingApi_HostAddress}}/api/venues/1
+Content-Type: application/json
+
+{
+  "id": 1,
+  "name": "Royal Hall",
+  "city": "Amman",
+  "address": "Main Street",
+  "countryId": 1,
+  "capacity": 120
+}
+
+### Delete venue: must have no associated events
+
+DELETE {{EventTicketingApi_HostAddress}}/api/venues/1
+
+
+### List events
+GET {{EventTicketingApi_HostAddress}}/api/events
+
+### Get event: replace with the ID returned by POST
+GET {{EventTicketingApi_HostAddress}}/api/events/1
+
+### Create event: use an existing venue ID; send dates in UTC
+POST {{EventTicketingApi_HostAddress}}/api/events
+Content-Type: application/json
+
+{
+  "name": "Music Workshop",
+  "description": "An introductory workshop",
+  "startDate": "2027-01-10T10:00:00Z",
+  "endDate": "2027-01-10T12:00:00Z",
+  "capacity": 100,
+  "venueId": 1
+}
+
+### Full event update: route/body IDs must match
+PUT {{EventTicketingApi_HostAddress}}/api/events/1
+Content-Type: application/json
+
+{
+  "id": 1,
+  "name": "Music Workshop",
+  "description": "Updated workshop",
+  "startDate": "2027-01-10T10:00:00Z",
+  "endDate": "2027-01-10T13:00:00Z",
+  "capacity": 120,
+  "venueId": 1
+}
+
+### Delete event: remove associated ticket categories first
+DELETE {{EventTicketingApi_HostAddress}}/api/events/1
+
+
+### Paged country search (names and short names)
+GET {{EventTicketingApi_HostAddress}}/api/countries?search=Jo&pageNumber=1&pageSize=10
+
+### Paged venues: filters can be combined
+GET {{EventTicketingApi_HostAddress}}/api/venues?countryId=1&city=Amman&search=Hall&pageNumber=1&pageSize=10
+
+### Paged events: inclusive event-start date range, using UTC
+GET {{EventTicketingApi_HostAddress}}/api/events?search=Music&venueId=1&countryId=1&city=Amman&startFrom=2027-01-01T00:00:00Z&startTo=2027-12-31T23:59:59Z&pageNumber=1&pageSize=10
+
+### Invalid page size should return 400
+GET {{EventTicketingApi_HostAddress}}/api/events?pageSize=101
+
+
+### Create category: use an existing event ID with sufficient unallocated capacity
+POST {{EventTicketingApi_HostAddress}}/api/ticket-categories
+Content-Type: application/json
+
+{
+  "name": "General Admission",
+  "description": "Standard entry",
+  "price": 15.50,
+  "capacity": 60,
+  "eventId": 1
+}
+
+### Get category: use the ID returned by POST
+GET {{EventTicketingApi_HostAddress}}/api/ticket-categories/1
+
+### Filter categories by event, text, price range, and page
+GET {{EventTicketingApi_HostAddress}}/api/ticket-categories?eventId=1&search=General&minPrice=0&maxPrice=20&pageNumber=1&pageSize=10
+
+### Full category update: the current allocation is excluded from the capacity check
+PUT {{EventTicketingApi_HostAddress}}/api/ticket-categories/1
+Content-Type: application/json
+
+{
+  "id": 1,
+  "name": "General Admission",
+  "description": "Standard entry",
+  "price": 20.00,
+  "capacity": 50,
+  "eventId": 1
+}
+
+### Delete category and free its allocation
+DELETE {{EventTicketingApi_HostAddress}}/api/ticket-categories/1

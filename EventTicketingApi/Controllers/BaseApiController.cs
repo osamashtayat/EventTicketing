@@ -14,6 +14,10 @@ public abstract class BaseApiController : ControllerBase
         };
 
         var problem = new ProblemDetails { Status = status, Title = title };
+        if (System.Diagnostics.Activity.Current is { } activity)
+        {
+            problem.Extensions["traceId"] = activity.Id;
+        }
 
         if (status != StatusCodes.Status500InternalServerError)
         {
