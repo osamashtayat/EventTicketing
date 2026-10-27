@@ -1,179 +1,107 @@
 # Business rules
 
-The event CRUD service now validates required input, positive capacity, valid date
-order, venue existence, and route/body ID agreement. It rejects a capacity below
-existing ticket-category allocations and deletion while categories exist. Event
-names may repeat. Category create/update and event capacity updates now use serializable
-transactions for allocation checks and writes. Event create/update now also requires capacity no
-greater than the selected venue's capacity (400, `Event.ExceedsVenueCapacity`).
-Event write JSON accepts MM/dd/yyyy (also ISO calendar dates) or ISO 8601 timestamps.
-Date-only starts use midnight UTC; date-only ends include the selected day and are
-converted to the following midnight. The same date for both is a valid one-day event.
-Explicit timestamps preserve exact times and offsets are normalized to UTC. Output
-remains ISO with an exclusive end instant. Reversed dates/equal timestamp instants
-are invalid; the converted end instant must follow the start.
-This parsing rule is scoped to create/update DTOs, not global configuration.
+This document describes implemented behavior. Future functionality is tracked in
+[ROADMAP.md](ROADMAP.md); detailed request/response contracts are in [FRONTEND_API.md](FRONTEND_API.md).
 
-At every instant, the sum of capacities of simultaneous events at a venue must be
-<= venue capacity. Event periods are [StartDate, EndDate): touching end/start times
-do not overlap. Create/update checks the peak simultaneous load, excluding the
-updated event; it does not simply sum all events that intersect the candidate.
-Over-allocation returns 409 `Event.VenueCapacityConflict`. For a venue of 10,
-overlapping capacities 5 and 6 conflict; 5 and 5 are allowed. Multiple overlapping
-events are checked together, not only pairwise.
+## Accounts and access
 
-Venue capacity reductions check the entire schedule: 409 `Venue.CapacityBelowEvent`
-when an individual event exceeds the proposed capacity, or 409
-`Venue.CapacityBelowOverlappingEvents` when the combined peak exceeds it. Equality
-is allowed. Schedule writers hold venue update locks through validation and commit;
-event moves lock both venues in ID order before the event. Competing creates,
-reschedules, and venue edits therefore cannot independently overallocate capacity.
-These are service/transaction rules, not a cross-row database check constraint.
-Existing invalid schedules are not rewritten automatically; adjust their event
-capacities/dates or increase venue capacity to make them valid.
+- Public registration creates a User. Only Admin can create Admin/EventOrganizer accounts.
+- Identity owns password hashing and role membership. Access/refresh tokens are opaque.
+- Country, venue, event, and category browsing is public. Country/venue writes require Admin.
+- Event creation requires Admin/EventOrganizer and assigns OrganizerId from authentication.
+- Event/category management requires Admin or that event's owning EventOrganizer.
+- Category moves require access to both source and destination events.
+- GET /api/events/mine lists only the signed-in Admin/EventOrganizer's events, with
+  standard filters/paging; Admin uses the public list to see all events.
+- Customer booking reads and cancellation are owner-only, including for Admin.
+  An unowned booking ID returns 404. Separate event history is read-only for Admin
+  or the owning organizer and does not disclose customer names/emails.
+- Venue read DTOs include capacity. Event read DTOs include organizerId; neither
+  ownership nor booking customer identity can be selected through write DTOs.
 
-## Implemented booking baseline (2026-10-27)
+## Event dates and venue scheduling
 
-The accepted [booking design](BOOKING_DESIGN.md) takes precedence over the older
-hold/payment proposals below. Bookings confirm immediately without payment, use USD
-price/name snapshots, and belong to the authenticated customer. All authenticated
-roles may book for themselves. Individual booking/cancellation endpoints remain
-customer-only, including for Admin. Read-only event history is available separately
-to Admin or the owning EventOrganizer.
-Missing/unowned booking IDs both return 404.
+- An event belongs to a venue and has positive capacity. End must follow start.
+- Event JSON writes accept MM/dd/yyyy or ISO 8601. Calendar-only starts use midnight
+  UTC; calendar-only end days are inclusive and become the following midnight.
+  Identical calendar dates create a one-day event. Exact timestamps retain their
+  times; offsets normalize to UTC. Internal/response end instants are exclusive.
+- At every instant, simultaneous event capacities must sum to no more than venue
+  capacity. Periods are [start, end); one event ending exactly when another starts
+  does not overlap. Updates exclude the current event from existing allocations.
+- The validator checks the peak over time, not only pairs or every event that
+  intersects a long candidate. With venue capacity 10, simultaneous 5 + 6 conflicts,
+  while 5 + 5 fits. Non-simultaneous allocations are not added together.
+- A single event above venue capacity returns 400 Event.ExceedsVenueCapacity.
+  Combined overlap overflow returns 409 Event.VenueCapacityConflict.
+- Venue reductions cannot fall below an individual event or the combined schedule
+  peak (409 Venue.CapacityBelowEvent / Venue.CapacityBelowOverlappingEvents).
+- Create/reschedule/move and venue edits hold venue locks through validation/commit.
+  Event moves lock both venues in ID order before the event lock. External SQL
+  writers must not bypass the application scheduling protocol.
+- Existing conflicting schedules are not automatically rewritten.
 
-Customers can cancel all remaining tickets or choose cumulative cancellation totals
-per own booking item. Reject foreign items and totals above the original quantity
-or below quantities already cancelled. New cancellation requires at least 24 hours
-before event start; exactly 24 hours is permitted. Replays that change no quantities
-return the existing state without releasing inventory again, including after cutoff.
-Cancellation decreases BookedQuantity atomically, making those tickets available
-for other customers. Preserve original quantities/totals and cancelled history.
+## Category allocations
 
-Conditional SQL claims, per-event transaction locks, and database counter constraints
-prevent overselling; booking/items and inventory commit or roll back together.
-Creation is limited to 20 tickets per request; there is no separate cancellation
-count limit. History blocks category deletion/moves, event deletion/date/venue changes,
-and category capacity below active inventory. Price/name edits affect future sales only.
-Request retries for creation are not idempotent yet; holds/payments/expiry are deferred.
+- Categories belong to one event and require a nonempty name, positive capacity,
+  and a USD price from 0 through 9999999999999999.99 with at most two fractional digits.
+  Free tickets are valid. Event/category names may repeat.
+- Combined category capacity cannot exceed event capacity. Updates exclude their
+  existing allocation and validate the destination when moving.
+- Capacity cannot fall below BookedQuantity. A database constraint enforces
+  0 <= BookedQuantity <= Capacity.
+- Category allocation writes and event-capacity changes use transactions and the
+  shared event-lock protocol. There is no automatic retry of arbitrary failures.
 
-The remaining detailed policies below are **proposed defaults**, not all implemented
-or accepted. Review them before their milestone. Open questions must be resolved
-before dependent code is written.
+## Booking creation
 
-## Implemented ticket-category rules
+- One booking covers one event and distinct category items, with at most 20 tickets
+  total. Quantities and IDs are positive; every category must belong to that event.
+- The authenticated account becomes CustomerId. All authenticated roles can book
+  for themselves. Prices, totals, currency, status, and ownership are server-controlled.
+- Creation immediately confirms an accepted reservation, not a paid purchase.
+  Booking closes at now >= event start. Availability reads are advisory.
+- Each inventory claim is conditional on available capacity. Every claim, booking,
+  and item commits in one transaction or all roll back. SQL Server locks coordinate
+  requests across API instances; process-local locks are not the protection boundary.
+- Item unit price/category name are snapshots. Later changes do not rewrite history.
+  USD unit prices use decimal(18,2), total amounts decimal(20,2).
+- Status values: Confirmed=0, PartiallyCancelled=1, Cancelled=2. No Pending/Expired/Paid
+  state is implemented.
+- Recognized booking deadlocks return retryable 409 Booking.RetryRequired. Creation
+  has no idempotency key; an uncertain timeout is not proof that the operation failed.
 
-- Create/update requires an existing event, nonempty name, positive category capacity,
-  and a nonnegative price that fits decimal(18,2). Reject additional fractional digits
-  rather than silently rounding them. Zero price is valid; currency is not yet modeled.
-- Sum of category capacities cannot exceed event capacity. Exclude the current category
-  on updates and check the destination event if EventId changes. Equality is valid.
-- Use a serializable transaction across the allocation check and save; event capacity
-  updates participate in the same isolation boundary. Aborted transactions are rolled
-  back; automatic deadlock retry is not implemented.
-- Category deletion and moves are rejected once any booking history exists.
-- Category names may repeat. List filtering is by event, name/description, and inclusive
-  price range; page rules reuse the shared query and result types.
+## Cancellation and released inventory
 
-## Events, venues, and ticket categories
+- A customer can cancel all remaining tickets or target any of their own booking items.
+- Partial targets are cumulative CancelledQuantity values, not increments. Targets
+  cannot decrease or exceed original quantities; foreign/duplicate items are invalid.
+- Omitted/null Items cancels everything remaining. An empty Items array is invalid.
+- New cancellation requires at least 24 hours before event start; equality is allowed.
+  A no-change replay returns current state without releasing inventory again, even
+  after cutoff. There is no separate cancellation-count limit across owned bookings.
+- Only newly cancelled quantities decrease BookedQuantity. Those tickets become
+  available for another customer after commit. Counters, item state, and booking
+  status change atomically.
+- Original quantities/total remain as history. Remaining/cancelled amounts are
+  reported separately. CancelledAtUtc is populated only when fully cancelled.
+- Cancellation records do not represent refunds; no payment integration exists.
 
-- A venue has a positive capacity. An event belongs to a venue and has a positive
-  attendance capacity no larger than that venue's capacity.
-- Ticket categories are allocations within an event. Their combined allocations
-  must not exceed event capacity. Availability cannot exceed the relevant allocation.
-- A capacity reduction or venue change cannot invalidate existing committed tickets
-  or active holds. Increasing capacity must still respect venue/event limits.
-- Ticket quantities are positive integers. Prices are nonnegative decimal amounts
-  with an explicit currency. Free tickets are allowed as a proposed default.
-- Event end must follow start. Sales, if time-limited, must have valid ordered bounds
-  and close no later than the event start under the proposed policy.
-- Preserve booked event/category history. Restrict destructive deletion once bookings
-  exist until an explicit cancellation/archival policy is agreed.
+## History and deletion
 
-Open: field limits, draft/published/cancelled event lifecycle, sales windows, event-start cutoff, allocation changes, and organizer cancellation.
-Event classification and ticket category are different concepts.
+- Countries with venues and venues with events cannot be deleted.
+- Events with categories or booking history cannot be deleted. Any booking history
+  blocks date/venue changes until rescheduling policy is implemented.
+- Categories with any booking history cannot be deleted or moved between events,
+  even when all bookings were cancelled. Valid price/name edits affect future sales.
+- User/event/category booking references restrict deletion rather than cascading
+  historical records. Ownership transfer and account anonymization are not implemented.
 
-## Inventory and overselling
+## Discovery and errors
 
-For category capacity C, confirmed quantity Q, and unexpired held quantity H:
-
-`available = C - Q - H`, with `Q + H <= C` and `available >= 0`.
-
-Apply the equivalent invariant at event capacity. Pending holds consume inventory;
-Cancelled and Expired bookings do not. A hold is only active before its expiry
-instant. Define one authoritative database accounting approach before implementation:
-an expired hold must be released or excluded consistently even if cleanup is delayed.
-
-An availability read is advisory. Booking must atomically check/claim capacity and
-write the booking/items in one transaction. Choose a database-enforced concurrency
-strategy (for example, conditional inventory updates or a concurrency token with
-bounded retry and revalidation); a read-then-write check alone is insufficient.
-In-process locks do not protect multiple API instances. For bookings with multiple
-items, either all claims succeed or the entire operation rolls back. Prove this
-using concurrent requests against SQL Server before marking bookings complete.
-
-## Proposed booking lifecycle
-
-| From | To | Preconditions / inventory effect |
-| --- | --- | --- |
-| New | Pending | Authorized customer; atomically claim inventory; set expiry once holds exist |
-| Pending | Confirmed | Hold is valid and confirmation succeeds; held quantity becomes confirmed, without claiming twice |
-| Pending | Cancelled | Authorized cancellation; release the held inventory once |
-| Pending | Expired | Expiry reached; release held inventory once |
-| Confirmed | Cancelled | Cancellation policy allows it; release confirmed inventory once |
-
-Cancelled and Expired are terminal. Reject other transitions. Once holds exist,
-at `now >= expiresAt` confirmation must fail; confirmation racing expiration must
-resolve atomically to one outcome. Repeated cancellation/expiration must not release
-capacity again. A later phase may create and confirm in one operation without exposing
-a temporary hold; agree the Phase 2 flow before coding. Never leave Pending inventory
-indefinitely allocated without an explicit resolution policy.
-
-Proposed booking shape: one event per booking, multiple ticket-category items,
-one customer owner. Store quantity and unit-price/currency snapshots; totals follow
-those snapshots, not later price changes. Do not mix currencies within one booking.
-
-## Cancellation, access, and retry policies
-
-- Proposed customer cancellation cutoff: before event start. The exact cutoff,
-  eligibility for confirmed tickets, and refund rules remain undecided.
-- Customers can access/cancel only their own bookings. Organizers manage only their
-  own events and categories. Administrator overrides require an explicit policy.
-- Privileged roles cannot be selected through ordinary public registration.
-- Once idempotency is introduced, scope a key to the authenticated caller/operation,
-  return the original outcome for an identical retry, and reject reuse with a
-  different payload. Define key lifetime and failure handling when implementing it.
-- Background expiration and future payment callbacks must tolerate repeated delivery
-  without duplicate confirmation, inventory release, or payment effects.
-
-## Decisions required before the relevant implementation
-
-1. Initial key types, field constraints, date/time convention, currency and precision.
-2. Event visibility/lifecycle and what happens to bookings when an organizer cancels.
-3. Capacity allocation/accounting strategy, booking limits per customer/request,
-   and initial booking confirmation flow.
-4. Cancellation deadline, refunds, fees/taxes, and administrator powers.
-5. Hold duration, expiry accounting, processing cadence, and retry/idempotency semantics.
-6. Payment provider and its relationship to booking confirmation (Phase 4).
-
-Record accepted decisions here and in architecture where appropriate; add tests
-for the agreed invariants instead of silently turning assumptions into requirements.
-
-## Implemented account creation
-
-Public registration always assigns User. Only an authenticated Admin may use
-POST /api/accounts to create an Admin or EventOrganizer account. New accounts get
-only their selected role; role membership does not imply other roles. Account and
-role writes are transactional. Optional first-admin bootstrap creates a new account
-only when no Admin exists and never promotes an existing account. Event ownership and existing endpoint role restrictions are implemented as described below.
-
-## Implemented authorization
-
-- Public reads remain available for countries, venues, events, and ticket categories.
-- Country/venue writes require Admin. Event creation requires Admin or EventOrganizer.
-- Event ownership uses the authenticated account ID and cannot be supplied/changed by DTOs.
-- Event and category edits/deletion require Admin or the owning EventOrganizer.
-- Category creation requires access to its event; a move requires access to both events.
-- Existing events are assigned to the Admin with the lowest user ID during migration;
-  migration stops if events exist but no Admin does. User deletion cannot cascade events.
-- Role and resource checks are separate. No organizer assignment/transfer operation exists yet.
+- PageNumber defaults to 1, PageSize to 10; maximum size is 100. Invalid values are
+  rejected, not clamped. Filters combine with AND and ordering is deterministic.
+- Unmatched list filters return an empty page. Missing resources return 404 where
+  access policy permits disclosure. Forbidden management operations return 403.
+- Expected service outcomes use Result/ProblemDetails; unexpected exceptions are
+  logged with trace IDs and returned as generic 500 responses without stack traces.

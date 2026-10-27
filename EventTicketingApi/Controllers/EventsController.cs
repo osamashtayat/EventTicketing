@@ -19,6 +19,15 @@ public class EventsController(IEventsService eventsService, IBookingsService boo
         return result.IsSuccess ? Ok(result.Value) : FailureResponse(result.FailureKind, result.Errors);
     }
 
+    [HttpGet("mine")]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.EventOrganizer)]
+    public async Task<ActionResult<PagedResult<EventDto>>> GetMyEvents(
+        [FromQuery] EventQuery query, CancellationToken cancellationToken)
+    {
+        var result = await eventsService.GetMyEventsAsync(query, cancellationToken);
+        return result.IsSuccess ? Ok(result.Value) : FailureResponse(result.FailureKind, result.Errors);
+    }
+
     [HttpGet("{id:int}")]
     public async Task<ActionResult<EventDto>> GetEventById(int id, CancellationToken cancellationToken)
     {

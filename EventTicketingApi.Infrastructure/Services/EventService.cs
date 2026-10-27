@@ -22,13 +22,25 @@ public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<Eve
     public async Task<Result<PagedResult<EventDto>>> GetEventsAsync(
         EventQuery query, CancellationToken cancellationToken = default)
     {
+        return (await ReadEventsAsync(appDbContext.Events.AsNoTracking(), query, cancellationToken)).LogResult(logger);
+    }
+
+    public async Task<Result<PagedResult<EventDto>>> GetMyEventsAsync(
+        EventQuery query, CancellationToken cancellationToken = default)
+    {
+        if (!eventAccess.CanManage)
+            return Result<PagedResult<EventDto>>.Forbidden(EventAccess.Denied()).LogResult(logger);
+        var events = appDbContext.Events.AsNoTracking().Where(e => e.OrganizerId == currentUser.Id);
+        return (await ReadEventsAsync(events, query, cancellationToken)).LogResult(logger);
+    }
+
+    private async Task<Result<PagedResult<EventDto>>> ReadEventsAsync(
+        IQueryable<Event> events, EventQuery query, CancellationToken cancellationToken)
+    {
         var errors = query.ValidateQuery(cancellationToken);
         if (errors.Length > 0)
-        {
-            return Result<PagedResult<EventDto>>.BadRequest(errors).LogResult(logger);
-        }
+            return Result<PagedResult<EventDto>>.BadRequest(errors);
 
-        var events = appDbContext.Events.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
             var search = query.Search.Trim();
@@ -60,7 +72,7 @@ public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<Eve
         var page = await events.OrderBy(e => e.StartDate).ThenBy(e => e.Id)
             .ProjectTo<EventDto>(mapper.ConfigurationProvider)
             .ToPagedResultAsync(query, cancellationToken);
-        return Result<PagedResult<EventDto>>.Success(page).LogResult(logger);
+        return Result<PagedResult<EventDto>>.Success(page);
     }
 
     public async Task<Result<EventDto>> GetEventByIdAsync(

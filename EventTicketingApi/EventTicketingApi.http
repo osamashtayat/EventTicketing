@@ -259,3 +259,7 @@ Content-Type: application/json
   "capacity": 5,
   "venueId": 1
 }
+
+### Own events: Admin/EventOrganizer only, scoped to the authenticated account
+GET {{EventTicketingApi_HostAddress}}/api/events/mine?pageNumber=1&pageSize=10
+Authorization: Bearer {{accessToken}}

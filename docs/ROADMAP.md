@@ -1,127 +1,50 @@
-# Development roadmap
+# Product roadmap
 
-This is an adjustable learning plan, not a commitment to implement all features.
-Checked items describe existing artifacts only. Complete one small task at a time;
-move a checkbox only after its completion criteria have been verified.
+Implemented behavior is described in the [API reference](FRONTEND_API.md) and
+[business rules](BUSINESS_RULES.md). This roadmap separates shipped backend capabilities,
+remaining frontend integration, and future product scope.
 
-## Preparation
+## Implemented
 
-- [x] Create API, Application, Domain, and Common projects with agreed references.
-- [x] Provide project context, architecture proposals, business rules, and agent skills.
-- [ ] Agree initial Venue/Event fields, capacity invariants, key strategy, and date/money conventions.
+- [x] ASP.NET Core API with Application, Domain, Infrastructure, and Common boundaries.
+- [x] SQL Server persistence, explicit EF mappings, and versioned migrations.
+- [x] Country, venue, event, and ticket-category CRUD with validation and error responses.
+- [x] Public discovery filters, bounded pagination, and deterministic ordering.
+- [x] Identity registration/login/refresh, roles, admin account creation, and current-user profile.
+- [x] Organizer ownership checks and protected event-wide booking history.
+- [x] Immediate USD bookings, historical price/name snapshots, personal history, and availability.
+- [x] Full/partial cancellation at least 24 hours before start with inventory release.
+- [x] Transactional inventory protection, concurrent-request tests, and retained booking history.
+- [x] Peak simultaneous venue-capacity checks, including rescheduling and venue reductions.
+- [x] Same-day calendar event inputs and exact ISO timestamp support.
+- [x] Venue capacity/event owner response fields and an authenticated owned-event listing.
+- [x] Central exception handling, structured outcome logging, trace IDs, and explicit CORS.
+- [x] React/TypeScript discovery, auth, customer booking/cancellation, and management workspaces.
+- [x] Backend xUnit coverage; frontend unit/browser verification recorded separately.
 
-Complete when the developer can explain the boundaries and has a reviewed model
-sketch. Current next task: design a Venue with a name, location, and positive capacity.
+## Next delivery
 
-## Phase 1 — Core foundation
+- [ ] Adopt expanded venue/event contracts in frontend runtime decoders and fixtures.
+- [ ] Enable admin venue editing with actual capacity prefilled from the API.
+- [ ] Add organizer My events and ownership-aware workspace controls.
+- [ ] Verify the complete authenticated browser-to-API booking/cancellation journey
+  against an isolated local fixture, beyond mocked frontend browser checks.
+- [ ] Add booking-create idempotency for safe client retries and uncertain outcomes.
+- [ ] Add CI with reproducible frontend checks and SQL Server integration tests.
 
-### 1.1 Domain and persistence foundation
+The concrete frontend changes and acceptance criteria are in the
+[frontend integration handoff](FRONTEND_HANDOFF.md).
 
-- [ ] Implement Venue, then Event and TicketCategory in small reviewed steps.
-- [ ] Agree persistence placement before installing EF Core/SQL Server dependencies.
-- [ ] Configure a local development database and secret-based connection configuration.
-- [ ] Add explicit EF mappings and review the first migration.
-- [ ] Add xUnit coverage for the first meaningful domain rules.
+## Product extensions
 
-Complete when relationships and constraints are explained, the migration can create
-a fresh local schema, the solution builds, and positive/invalid capacity cases pass.
+- [ ] Temporary ticket holds, explicit expiry, and background cleanup.
+- [ ] Sandbox payment integration with verified callbacks and reconciliation.
+- [ ] Ticket issuance, QR check-in, and duplicate-scan protection.
+- [ ] Email delivery for account/booking workflows, including retries.
+- [ ] Event classification and a defined publication/cancellation lifecycle.
+- [ ] Account/profile administration beyond current account creation.
+- [ ] Deployment configuration, production SPA routing/CORS, and persistent diagnostics.
 
-### 1.2 Venue and event CRUD
-
-Current extension: shared venue capacity is checked over simultaneous event periods
-on create/update and venue capacity edits, with transactional concurrency protection.
-Event JSON writes accept MM/dd/yyyy alongside ISO timestamps; date-only end days
-are inclusive, allowing same-day events. Internal/response end instants are exclusive.
-
-- [ ] Choose controllers or minimal APIs for the first endpoint.
-- [ ] Implement one vertical slice, beginning with venue creation and retrieval.
-- [ ] Add event CRUD and ticket-category management incrementally.
-- [ ] Use DTOs, validation, explicit mapping, appropriate HTTP responses, and basic error handling.
-- [ ] Add focused service and HTTP integration tests as behavior is introduced.
-
-Complete when valid operations work, missing resources and invalid input produce
-documented responses, entities are not exposed directly, and tests cover those
-paths. Treat anonymous write endpoints as a local learning stage until Phase 2.
-
-### 1.3 Discovery
-
-Implemented baseline before accounts/authentication: reusable Application
-`PagedResult<T>` and PageQuery plus resource-specific queries for countries, venues,
-and events. Filters run before SQL count/paging, with page-size bounds and stable
-ordering. SQL Server/HTTP checks passed; richer sort/classification filters remain
-future work.
-
-- [x] Add text/location filters and stable pagination for current list endpoints.
-- [ ] Add event classification filtering after a classification model is agreed.
-- [x] Define deterministic sorting, page-size bounds, and empty-result behavior.
-
-Complete when combined filters and page boundaries are verified, query execution
-is bounded, and request/response examples describe the actual API.
-
-## Phase 2 — Authentication and bookings
-
-### 2.1 Accounts and authorization
-
-- [ ] Complete Identity endpoint authentication with safe configuration and credential handling (built-in opaque bearer tokens selected, rather than custom JWT).
-- [ ] Implement registration/sign-in and Administrator, Event Organizer, Customer roles.
-- [x] Enforce resource ownership as well as role checks on existing write operations.
-- [x] Test unauthenticated, forbidden, owner, and authorized administrator cases against isolated SQL Server with real Identity tokens.
-
-Complete when customers cannot grant themselves privileged roles or access another
-customer's bookings and organizers cannot manage another organizer's events.
-
-### 2.2 Booking baseline
-
-See the [accepted booking design](BOOKING_DESIGN.md) for immediate confirmation, USD,
-24-hour cancellation, and partial/full inventory release. Payment/holds remain deferred.
-
-- [x] Agree booking transitions, cancellation policy, and inventory accounting.
-- [x] Implement booking creation, cancellation, availability, and customer history.
-- [x] Make booking/inventory writes atomic and protect against concurrent overselling.
-- [x] Test insufficient capacity, repeated cancellation, rollback, and competing requests.
-
-Complete when inventory never goes below zero or exceeds capacity, cancellation
-releases inventory at most once, and SQL Server tests demonstrate transaction and
-concurrency behavior. Baseline correctness belongs here even though deeper study
-of transactions and concurrency continues in Phase 3.
-
-## Phase 3 — Advanced backend engineering
-
-### 3.1 Temporary reservations and expiration
-
-- [ ] Agree hold duration and confirmation/expiration boundary behavior.
-- [ ] Add expiring Pending holds, confirmation, and background cleanup.
-- [ ] Make expiration/retry processing safe and add appropriate request idempotency.
-
-Complete when confirmation racing expiration has one valid outcome, expired holds
-do not consume sellable inventory indefinitely, and retries do not duplicate bookings
-or release inventory twice. Verify using a controllable clock and database integration tests.
-
-### 3.2 Reliability
-
-- [ ] Expand unit/integration coverage and add CI once the repository workflow is ready.
-- [ ] Improve exception handling, structured logging, and operational diagnostics.
-
-Baseline now implemented: central HTTP exception handling and console error logging
-with trace IDs, plus service-result logging. Further logging sinks, background-job handling, and operational
-monitoring remain future work; this does not complete the reliability milestone.
-- [ ] Review transaction boundaries and failure recovery under concurrent load.
-
-Complete when failures produce useful responses/logs without secrets, automated
-checks run reproducibly, and key booking failure scenarios are documented and tested.
-
-## Phase 4 — Optional production-oriented work
-
-Each item requires a separate scoped design and implementation decision.
-
-- [ ] QR tickets: define issuance, uniqueness, and duplicate-scan behavior; test verification.
-- [ ] Email: define delivery triggers and safe retries; verify with a local/test provider.
-- [ ] Payments: use a provider sandbox, verified callbacks, reconciliation, and idempotency;
-  verify failure/refund paths before any live use.
-- [ ] Docker/deployment: reproducible startup, externalized secrets, documented migration
-  process, and deployed smoke verification.
-- [ ] Reporting/admin UI: agree authorized users and metrics before adding endpoints.
-- [ ] Optional React frontend: agree API contracts and verify an end-to-end user flow.
-
-Do not mark the project production-ready merely because these checkboxes are complete;
-readiness requires a separate assessment of the actual deployment and requirements.
+Assigned seats, refund policy, organizer event cancellation, and production operating
+requirements need explicit designs before implementation. Passing current tests is
+not a production-readiness certification.

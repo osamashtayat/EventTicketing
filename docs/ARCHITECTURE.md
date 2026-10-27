@@ -1,111 +1,116 @@
 # Architecture
 
-## Current ownership implementation
+Encore consists of an ASP.NET Core API, a SQL Server persistence layer, and a separate
+React/TypeScript SPA. Business decisions live behind service contracts; controllers
+translate requests and Results into HTTP responses.
 
-Infrastructure owns EF/Identity and service implementations, referencing Application
-and Domain. API references Infrastructure for DI. Application holds contracts, DTOs,
-and mappings; Domain and Common remain independent. `ICurrentUser` is an Application
-contract implemented by API's `HttpCurrentUser`. Infrastructure's `EventAccess`
-uses it for service ownership checks. Controllers restrict write roles; services
-verify event ownership without depending on HTTP. Event stores only OrganizerId,
-with the Identity foreign key configured in Infrastructure. The scaffold overview
-below is historical, not the current dependency/package inventory.
+## Project dependencies
 
-`Domain/EventCapacitySchedule` computes the peak simultaneous scheduled capacity.
-Infrastructure's VenueCapacityValidator loads relevant periods and validates them
-under venue locks. Event creation/rescheduling and venue edits hold those locks
-through commit, taking both venues in ID order for moves before the event lock.
-Existing booking/category mutations use their event locks and share no UI concerns.
-There is no new schema or dependency for this scheduling rule.
+```mermaid
+flowchart TD
+    UI[React / TypeScript SPA] -->|HTTPS JSON / opaque bearer token| API[API]
+    API --> Application
+    API --> Infrastructure
+    API --> Common
+    Infrastructure --> Application
+    Infrastructure --> Domain
+    Application --> Domain
+    Application --> Common
+    Infrastructure -->|EF Core / Identity| SQL[(SQL Server)]
+```
 
-## Initial scaffold structure
-
-`EventTicketingApi.slnx` contains four .NET 10 projects:
-
-| Project | Current contents | Direct project references |
-| --- | --- | --- |
-| EventTicketingApi | Minimal API weather sample, configuration, OpenAPI | Application, Common |
-| EventTicketingApi.Application | Generated class placeholder | Domain, Common |
-| EventTicketingApi.Domain | Generated class placeholder | None |
-| EventTicketingApi.Common | Generated class placeholder | None |
-
-Nullable reference types and implicit usings are enabled. No EF Core, DbContext,
-SQL Server configuration, Identity, validation library, or tests exist. The API
-currently uses minimal APIs; controllers have not been configured.
-
-## Proposed responsibility boundaries
-
-- **API:** route definitions or controllers, HTTP status codes, authentication
-  middleware, request handling, and the dependency-injection composition root.
-- **Application:** use-case services, DTOs, explicit mapping, validation of use-case
-  inputs, and orchestration. Business rules must not depend on an HTTP context.
-- **Domain:** entities and business invariants using plain C#. Avoid ASP.NET Core
-  and EF-specific dependencies. Keep persistence mapping outside these entities.
-- **Common:** only small types with a demonstrated need across projects, such as
-  a shared result type. Domain concepts belong in Domain, not Common. Do not add
-  utilities in anticipation of future use.
-
-Dependency direction remains API → Application → Domain, with the existing optional
-Common references. API code should normally access domain behavior through use
-cases rather than acquiring another reference for convenience.
-
-Use simple use-case services, constructor injection, DTOs, and manual mapping to
-start. Do not introduce CQRS, MediatR, a generic repository, or an interface per
-class without a concrete reason. Decide controllers versus minimal APIs when
-implementing the first endpoint; either can keep HTTP concerns thin.
-
-## Persistence decision gate — not implemented
-
-EF Core and SQL Server are the intended persistence technologies. No project has
-yet been assigned ownership of DbContext, mappings, migrations, or implementation
-of data-access contracts. Before adding EF packages, discuss and agree placement:
-
-1. A small Infrastructure project can own EF Core and migrations, reference
-   Application/Domain as needed, and be registered by API. This preserves the
-   current inner-layer boundaries but adds a project and contracts where needed.
-2. Keeping persistence in an existing project reduces project count but couples
-   that project to EF Core; document the concrete trade-off and reference changes.
-
-Neither option is selected here. Obtain agreement before changing architecture.
-Avoid creating a generic repository as a prerequisite. If an abstraction is needed
-to cross a boundary, make it specific to an actual use case.
-
-## Proposed relational model — not a final schema
-
-| Concept | Intended relationships and considerations |
+| Project | Responsibility |
 | --- | --- |
-| Venue | One venue hosts many events; positive attendance capacity and address/location |
-| Event | Belongs to a venue and, after auth, an organizer; title, description, start/end, capacity |
-| TicketCategory | Belongs to one event; name, price/currency, allocation, optional sale window |
-| User | Future Identity-backed account; role and ownership checks remain separate |
-| Booking | Belongs to a customer; proposed to cover one event and contain multiple items |
-| BookingItem | Category, positive quantity, and immutable price/currency snapshot |
+| EventTicketingApi | Controllers, Identity route composition, middleware, CORS, HTTP current-user adapter, and DI |
+| EventTicketingApi.Application | Service contracts, request/response DTOs, validation, serialization, and AutoMapper profiles |
+| EventTicketingApi.Domain | Plain entities, booking states, and peak simultaneous event-capacity calculation |
+| EventTicketingApi.Infrastructure | Concrete services, EF mappings/migrations, Identity users, logging, and database transactions |
+| EventTicketingApi.Common | Framework-independent Result/error types and shared constants |
+| EventTicketingApi.IntegrationTests | xUnit tests using real HTTP, Identity tokens, and isolated SQL Server databases |
 
-An event classification for search (for example, Music) is distinct from a ticket
-category (for example, VIP). Decide whether event classification is a lookup,
-enum, or text before implementing filters. Assigned seating is deferred; start
-with general admission unless the developer chooses otherwise.
+Domain and Common have no project references. Infrastructure implements Application
+contracts. Services access the scoped AppDbContext directly; there is no generic
+repository, CQRS bus, or MediatR dependency.
 
-Proposed conventions to agree during modeling:
+## Request flow
 
-- Use consistent primary keys; choose integer versus GUID keys before the first migration.
-- Represent money with `decimal`, explicit database precision and currency; do not
-  derive historical booking totals from today's ticket price.
-- Represent instants consistently in UTC, preferably with `DateTimeOffset`; retain
-  venue time-zone information if local-time display/scheduling requires it.
-- Map required fields, lengths, foreign keys, and database constraints explicitly.
-  Index actual lookup paths (event dates, category/event keys, customer bookings)
-  based on the queries being built.
-- Preserve booking history; prefer restricting deletion or explicit archival over
-  cascading deletion of booked events/categories. Confirm lifecycle policy first.
-- Do not store an independently editable availability count without a clear
-  transactional inventory design. See the business rules for capacity invariants.
+1. Authentication middleware validates the caller; controller attributes restrict roles.
+2. The controller passes a DTO/cancellation token to its Application service contract.
+3. Infrastructure validates use-case input, checks ownership, and coordinates persistence.
+4. Results represent expected validation/missing/conflict/forbidden outcomes; controllers
+   translate them into ProblemDetails/status codes. Unexpected exceptions reach the
+   global exception handler, which logs the exception and returns a generic response.
+5. Read DTOs are projected or mapped without exposing tracked EF entities.
 
-## Verification and evolution
+## Identity and ownership
 
-Introduce focused domain/service tests as rules arrive and HTTP integration tests
-as endpoints arrive. Use SQL Server integration coverage for provider-specific
-constraints, transactions, and concurrency; an in-memory provider cannot establish
-those guarantees. Add basic input errors and useful logging with the first slice;
-broaden diagnostics in later milestones. Document approved decisions here and
-update the roadmap instead of treating proposals as implemented facts.
+Identity uses its built-in opaque bearer access/refresh tokens, not custom JWT issuance.
+Public registration always assigns User. Admin-only account creation can assign Admin
+or EventOrganizer. ICurrentUser exposes the signed-in ID/roles without coupling service
+contracts to HttpContext. Its HTTP implementation lives in API.
+
+Event stores OrganizerId as a string; Infrastructure maps its Identity foreign key.
+EventAccess checks Admin or the owning EventOrganizer for management operations.
+Bookings belong to the authenticated CustomerId. Personal booking reads/cancellation
+remain owner-only; separate authorized event history is read-only for managers.
+
+## Inventory and transactions
+
+Booking creation locks the event, validates categories, conditionally increments
+BookedQuantity, and saves the booking/items in one transaction. Availability reads
+are advisory. Category capacity and booked-count constraints provide an additional
+persistence boundary; booked quantities cannot become negative or exceed capacity.
+
+Partial cancellation uses cumulative per-item targets. Inside a transaction, the
+service locks the event and owned booking, releases only the newly cancelled quantity,
+and saves item counts/status. A retry cannot release the same inventory twice.
+Historical quantities, prices, and category names are retained.
+
+Category allocations stay within event capacity. Category writes and event updates
+also enforce booking-history restrictions. SQL Server-specific locking and constraints
+are verified against SQL Server, rather than inferred from an in-memory provider.
+
+## Venue scheduling
+
+EventCapacitySchedule calculates peak simultaneous event allocation using start/end
+changes, with intervals [start, end). VenueCapacityValidator loads relevant periods;
+event create/update and venue-capacity edits hold venue update locks through commit.
+Moves lock both venues in ID order before the event. Existing booking/category writes
+then use event/category locks. This protocol coordinates multiple API instances.
+
+The rule limits simultaneous allocations, not the sum of every event on a venue's
+calendar. There is no cross-row declarative database constraint for the schedule;
+all application schedule writers must follow the shared transaction protocol.
+
+## Time and money
+
+Event storage uses UTC-convention DateTime. Event write converters accept ISO timestamps
+or calendar-only dates; date-only end days are inclusive and converted to the following
+midnight. Internally the end instant is exclusive. SQL reads can omit the UTC suffix;
+clients normalize those documented event strings as UTC. Booking timestamps are
+DateTimeOffset, and TimeProvider makes cutoff tests deterministic.
+
+USD unit-price snapshots use decimal(18,2); booking totals use decimal(20,2). The API
+serializes numeric JSON values. Encore's client preserves monetary tokens at the JSON
+boundary and uses decimal strings/bigint cents rather than binary floating-point arithmetic.
+
+## Frontend boundary
+
+The SPA has feature-owned API modules/runtime decoders, TanStack Query resource caches,
+React Router navigation, local form state, and a memory-only credential vault. Private
+queries are scoped to session generation. CORS permits explicit origins; /api/auth/me
+provides profile/roles because the access token is opaque.
+
+The backend now exposes venue capacity, event organizerId, and /api/events/mine.
+The pending frontend integration is specified in [FRONTEND_HANDOFF.md](FRONTEND_HANDOFF.md).
+See the [frontend architecture](../EventTicketingFrontend/ARCHITECTURE.md) for client boundaries.
+
+## Verification and remaining scope
+
+The latest backend suite contains 48 passing tests. It checks authorization, contract
+mapping, inventory/schedule races, rollback, cancellation deadlines, and response privacy.
+Each integration test owns a uniquely named local database and removes it afterward.
+
+Payments, issued/QR tickets, assigned seats, expiring holds, create-request idempotency,
+and deployment automation are separate roadmap items. They are not implied by the
+current booking-confirmation state.

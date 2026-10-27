@@ -208,7 +208,7 @@ Search and city query strings have maximum length 200.
 | --- | --- | --- |
 | Countries | `search` in name/shortName | name, id |
 | Venues | `search` in name/address; `countryId`; `city` | name, id |
-| Events | `search` in name/description; `venueId`; `countryId`; `city`; `startFrom`; `startTo` | startDate, id |
+| Events (public and mine) | `search` in name/description; `venueId`; `countryId`; `city`; `startFrom`; `startTo` | startDate, id |
 | Ticket categories | `eventId`; `search` in name/description; `minPrice`; `maxPrice` | name, id |
 | Own bookings | `eventId`; `status` | createdAtUtc descending, id descending |
 | Event bookings | `status` (event comes from route) | createdAtUtc descending, id descending |
@@ -255,7 +255,7 @@ Both strings are required. CountrySummary is `{id,name,shortName}`. Country deta
   "id": 1,
   "name": "Jordan",
   "shortName": "JO",
-  "venues": [{"id":1,"name":"City Hall","city":"Amman","countryId":1,"address":"Main Street"}]
+  "venues": [{"id":1,"name":"City Hall","city":"Amman","countryId":1,"capacity":500,"address":"Main Street"}]
 }
 ```
 
@@ -277,7 +277,7 @@ All GETs are public. All writes require Admin.
 | PUT | `/api/venues/{id}` | VenueWrite + id | 200, Venue |
 | DELETE | `/api/venues/{id}` | — | 204, empty |
 
-VenueWrite (capacity is required even though it is absent from read responses):
+VenueWrite (capacity is also returned in venue responses):
 
 ```json
 {"name":"City Hall","city":"Amman","countryId":1,"capacity":500,"address":"Main Street"}
@@ -287,7 +287,7 @@ Required name/city, positive countryId/capacity. Address may be omitted and defa
 to an empty string. Response:
 
 ```json
-{"id":1,"name":"City Hall","city":"Amman","countryId":1,"address":"Main Street"}
+{"id":1,"name":"City Hall","city":"Amman","countryId":1,"capacity":500,"address":"Main Street"}
 ```
 
 A missing country returns 404. Venue names must be unique (409). Capacity cannot be
@@ -295,9 +295,9 @@ reduced below any existing event's capacity or the peak combined capacity of
 simultaneous events (409). A venue with events cannot be
 deleted (409). Missing venue returns 404.
 
-**Current UI limitation:** the read DTO omits capacity, so a frontend cannot reliably
-prefill a venue edit form after reload. Do not derive it from event capacities. Request
-an API response enhancement before building a complete venue-edit screen.
+Venue capacity is returned consistently in detail, list, create/update responses,
+and country-details nested venues. Use it to prefill full PUT requests; do not infer
+it from events or hardcode a fallback.
 
 ## Events
 
@@ -308,6 +308,7 @@ PUT/DELETE and event history require Admin or the organizer who owns that event.
 | --- | --- | --- | --- |
 | GET | `/api/events` | — | 200, Page<Event> |
 | GET | `/api/events/{id}` | — | 200, Event |
+| GET | `/api/events/mine` | — | 200, Page<Event>; Admin/EventOrganizer, own events only |
 | GET | `/api/events/{id}/availability` | — | 200, Availability[] (raw array) |
 | GET | `/api/events/{id}/bookings` | — | 200, Page<Booking>; protected |
 | POST | `/api/events` | EventWrite | 201, Event + Location |
@@ -355,10 +356,10 @@ preview is exposed; handle 409 on submission. Existing conflicting schedules are
 not automatically changed by this rule.
 
 
-Event response is the write fields plus `id`, with nullable description:
+Event response is the write fields plus `id` and server-owned `organizerId`, with nullable description:
 
 ```json
-{"id":1,"name":"Music Night","description":"Live performances","startDate":"2030-01-03T12:00:00Z","endDate":"2030-01-03T14:00:00Z","capacity":100,"venueId":1}
+{"id":1,"name":"Music Night","description":"Live performances","startDate":"2030-01-03T12:00:00Z","endDate":"2030-01-03T14:00:00Z","capacity":100,"venueId":1,"organizerId":"<user-id>"}
 ```
 
 Creation assigns organizer ownership from the authenticated caller, including when
@@ -375,10 +376,17 @@ unless filtered. It exposes Booking DTOs, not customer names/emails. It is read-
 it does not let the organizer/admin cancel a customer's booking. An authorized caller
 requesting a missing event receives 404.
 
-**Current UI limitation:** responses omit organizerId and list queries have no organizer
-filter or `/mine` endpoint. The frontend cannot reliably identify "my events" from
-public event data. Server permissions still work; request an owner-aware API contract
-before implementing a complete organizer dashboard.
+`GET /api/events/mine` requires Admin or EventOrganizer and returns only events
+whose organizerId matches the authenticated account. Even Admin receives only its
+own events from mine; use the public `/api/events` list for all events. Mine supports
+all public EventQuery filters (search, venueId, countryId, city, startFrom, startTo)
+and pageNumber/pageSize with the same ordering/validation. An organizer with no owned
+events receives an empty page; anonymous callers get 401 and ordinary users get 403.
+Do not pass an organizerId: the service always scopes ownership from authentication.
+
+Use `me.roles.includes("Admin") || (me.roles.includes("EventOrganizer") &&
+event.organizerId === me.id)` for management UI visibility. The API still enforces
+ownership on every protected operation; client-side visibility is not permission.
 
 ## Ticket categories
 
@@ -700,8 +708,6 @@ The current app overrides registration; its custom contract above takes preceden
   reflect controller/service behavior; do not infer authorization from a 200-only schema.
   The overridden registration handler also lacks an inferred request body in generated
   OpenAPI; use the four-field registration contract in this guide.
-- Venue responses omit capacity; event responses omit organizerId and offer no
-  organizer-specific event list. These require API additions for full edit/dashboards.
 - Manager event-booking history has no customer-identifying fields or search.
 - No image/media upload, event classification, publish lifecycle, seat assignment,
   payment, refunds, holds, issued tickets/QR, booking-create idempotency, custom logout,

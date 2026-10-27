@@ -2,9 +2,9 @@
 
 ## Purpose and working style
 
-This is an educational C# backend and portfolio project for discovering events,
-managing venues and ticket categories, and booking tickets. Help the developer
-learn by explaining the relevant concept, a small next step, and its trade-offs.
+Encore is a full-stack event discovery, venue management, and ticket-booking
+application. Maintain clear architecture, reliable transactional behavior, accurate
+API contracts, and concise professional documentation.
 Implement requested changes by default, including users and authentication, unless
 explicitly asked for guidance, explanation, or review only. Complete the requested
 slice, briefly explain what changed and its verification, then suggest the next step.
@@ -52,8 +52,7 @@ Run `dotnet test EventTicketingApi.slnx` (or the affected test project).
 Integration tests require local SQL Server at localhost,1434 via API User Secrets
 or EVENT_TICKETING_TEST_CONNECTION. Each test migrates/deletes its own uniquely
 named database; never target the application database for test setup or cleanup.
-A successful
-build or test command with no discovered tests is not evidence of tested features.
+A successful build or test command with no discovered tests is not evidence of tested features.
 Run meaningful checks for each change and report what ran, what passed, and what
 could not be verified. Documentation-only changes need link/content checks, not new tests.
 

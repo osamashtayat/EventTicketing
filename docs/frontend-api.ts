@@ -18,12 +18,10 @@ export interface CountrySummary extends CountryWrite { id: number }
 export interface Country extends CountrySummary { venues: Venue[] }
 export interface CountryQuery extends PageQuery { search?: string }
 export interface VenueWrite { name: string; city: string; countryId: number; capacity: number; address?: string }
-// Capacity is currently omitted by the API's venue response DTO.
-export interface Venue { id: number; name: string; city: string; countryId: number; address: string | null }
+export interface Venue { id: number; name: string; city: string; countryId: number; capacity: number; address: string | null }
 export interface VenueQuery extends PageQuery { search?: string; countryId?: number; city?: string }
 export interface EventWrite { name: string; description?: string | null; startDate: EventDateInput; endDate: EventDateInput; capacity: number; venueId: number }
-// OrganizerId is stored by the backend but is not exposed in this response.
-export interface Event { id: number; name: string; description: string | null; startDate: Timestamp; endDate: Timestamp; capacity: number; venueId: number }
+export interface Event { id: number; name: string; description: string | null; startDate: Timestamp; endDate: Timestamp; capacity: number; venueId: number; organizerId: string }
 export interface EventQuery extends PageQuery { search?: string; venueId?: number; countryId?: number; city?: string; startFrom?: Timestamp; startTo?: Timestamp }
 export interface TicketCategoryWrite { name: string; description?: string | null; price: number; capacity: number; eventId: number }
 export interface TicketCategory { id: number; name: string; description: string | null; price: number; capacity: number; eventId: number }

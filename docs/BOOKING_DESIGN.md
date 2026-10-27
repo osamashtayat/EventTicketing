@@ -1,8 +1,8 @@
-# Booking baseline — accepted design
+# Booking and inventory design
 
-Rules approved on 2026-10-27; implementation follows this document.
+Implemented booking semantics and transaction boundaries.
 
-- Immediate confirmation, no payment or temporary holds in this milestone.
+- Immediate confirmation, no payment or temporary holds in the current booking flow.
 - All existing ticket prices and booking snapshots are USD (two decimal places).
 - Customers may cancel any number of their own active tickets, partially or fully,
   at least 24 hours before event start. Exactly 24 hours is allowed.
@@ -45,7 +45,7 @@ are later milestones. No Pending state without an expiry/confirmation workflow.
 | --- | --- | --- |
 | POST /api/bookings | Create for signed-in account | 201 with DTO and Location |
 | GET /api/bookings/mine | Paged history; status/event filters | 200 |
-| GET /api/bookings/{id} | Own booking details |
+| GET /api/bookings/{id} | Own booking details | 200 |
 | GET /api/events/{id}/bookings | Admin/owning organizer paged event history | 200 |
 | POST /api/bookings/{id}/cancel | Cancel own booking | 200 with DTO |
 | GET /api/events/{eventId}/availability | Public category availability | 200 |
@@ -133,24 +133,14 @@ Also test ownership, spoofed customer/prices, mixed-event/duplicate inputs, immu
 price snapshots, cutoff boundaries with controlled time, and management history guards.
 Use isolated databases and real Identity tokens for persistence/HTTP verification.
 
-## Implementation order
+## Verification and evolution
 
-Models/mappings and migration, atomic creation, history and partial/full cancellation,
-management guards, then SQL Server concurrency and real-token HTTP verification.
-Existing prices are interpreted as USD under the approved single-currency decision.
-Payment, holds, purchase idempotency, and refunds remain future work.
+The AddBookings migration defines the schema. Apply versioned migrations to each
+target database before running the API. Existing prices are interpreted as USD.
+Tests use real SQL Server, Identity tokens, and controlled time for inventory,
+ownership, cancellation, concurrency, and historical-value checks.
 
-## Implemented verification
-
-The baseline is implemented with an AddBookings migration. Twelve xUnit integration
-tests pass using isolated SQL Server databases, real Identity tokens, and controlled
-time. Coverage includes full/partial cancellation and rebooking released inventory,
-customer isolation, 24-hour equality/late boundaries, competing last-ticket requests,
-concurrent full cancellation retries, immutable USD prices, multi-item rollback,
-management/history guards, category-capacity races, and maximum monetary precision.
-The migration has not been applied to the application's database.
-
-Event history uses EventBookingQuery (status, page number/size) and the existing
-BookingDto. Role/ownership checks run in the service through EventAccess; controller
-attributes also reject anonymous/ordinary users. Personal booking filters additionally
-accept EventId. Both history paths share query ordering/paging/projection helpers.
+Event history uses EventBookingQuery (status, paging) and BookingDto. EventAccess
+performs service ownership checks; controller attributes enforce roles. Personal
+history additionally filters by EventId. Creation idempotency, payment, expiry,
+and refunds are separate roadmap items.

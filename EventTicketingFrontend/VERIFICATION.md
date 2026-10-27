@@ -46,6 +46,6 @@ Opened `http://localhost:5173/events` in that Mac Chrome profile. The Encore tit
 
 ## Remaining limits
 
-Live authentication, refresh claims, nonempty event/availability decoding, management writes, booking/cancellation, and SQL inventory/concurrency guarantees were not exercised. The live catalogue is empty; no approved test credentials or disposable database fixture were supplied. Mock tests do not certify these backend behaviors.
+Live authentication, refresh claims, nonempty event/availability decoding, management writes, booking/cancellation, and SQL inventory/concurrency guarantees were not exercised. The catalogue was empty during the recorded smoke check; that historical result does not describe current database contents. Authenticated frontend flows were not verified in that run. Mock tests do not certify these backend behaviors.
 
-Venue editing and a complete organizer-owned event list remain intentionally deferred for missing API read fields. Production SPA routing/CORS requires configuration for the selected host. No backend files, database state or deployed site were changed.
+Venue editing and a complete organizer-owned event list remain pending frontend integration. The backend now exposes capacity, organizerId, and /api/events/mine; see the current handoff. Production SPA routing/CORS requires configuration for the selected host. No backend files, database state or deployed site were changed.
