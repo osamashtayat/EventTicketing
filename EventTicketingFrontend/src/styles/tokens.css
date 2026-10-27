@@ -1,0 +1,31 @@
+:root {
+  --surface-canvas: #f7f4ee;
+  --surface-card: #fff;
+  --surface-dark: #111827;
+  --text-primary: #20242a;
+  --text-muted: #59616d;
+  --text-inverse: #f7f4ee;
+  --accent: #f97857;
+  --accent-hover: #f56540;
+  --accent-ink: #a73720;
+  --border-subtle: #d7d3cb;
+  --border-control: #737b87;
+  --focus-ring: #1d4ed8;
+  --success-ink: #166534;
+  --success-surface: #dcfce7;
+  --warning-ink: #854d0e;
+  --warning-surface: #fef3c7;
+  --danger-ink: #b42318;
+  --danger-surface: #fee4e2;
+  --font-editorial: Georgia, 'Times New Roman', serif;
+}
+@theme inline {
+  --color-canvas: var(--surface-canvas);
+  --color-card: var(--surface-card);
+  --color-midnight: var(--surface-dark);
+  --color-ink: var(--text-primary);
+  --color-muted: var(--text-muted);
+  --color-coral: var(--accent);
+  --color-line: var(--border-subtle);
+  --font-editorial: var(--font-editorial);
+}

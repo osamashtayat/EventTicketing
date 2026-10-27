@@ -1,5 +1,18 @@
 # Event Ticketing API
 
+## Encore frontend
+
+The complete React/TypeScript frontend is in [EventTicketingFrontend/](EventTicketingFrontend/), alongside the backend projects. The website is named **Encore**.
+
+```sh
+cd EventTicketingFrontend
+npm ci
+cp .env.example .env.local
+npm run dev
+```
+
+Open **http://localhost:5173/events** with the backend running at **https://localhost:7209**. See the [frontend setup guide](EventTicketingFrontend/README.md), [architecture](EventTicketingFrontend/ARCHITECTURE.md), and [verification record](EventTicketingFrontend/VERIFICATION.md) for features, checks, and remaining live-integration limits.
+
 **Frontend handoff:** [complete API reference](docs/FRONTEND_API.md) and
 [TypeScript wire contracts](docs/frontend-api.ts), covering all current routes,
 authentication, permissions, examples, filters, and response limitations.
