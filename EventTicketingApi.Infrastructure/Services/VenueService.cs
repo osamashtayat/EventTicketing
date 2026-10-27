@@ -1,3 +1,4 @@
+using EventTicketingApi.Infrastructure.Validation;
 using EventTicketingApi.Application.DTOs.Common;
 using EventTicketingApi.Infrastructure.Pagination;
 using EventTicketingApi.Infrastructure.Logging;
@@ -14,12 +15,12 @@ using AutoMapper.QueryableExtensions;
 
 namespace EventTicketingApi.Infrastructure.Services;
 
-public class VenueService(AppDbContext appDbContext, IMapper mapper, ICountriesService countryService, ILogger<VenueService> logger) : IVenuesService
+public class VenueService(AppDbContext appDbContext, IMapper mapper, ICountriesService countryService, ILogger<VenueService> logger, VenueCapacityValidator venueCapacityValidator) : IVenuesService
 {
     public async Task<Result<PagedResult<VenueSummaryDto>>> GetVenuesAsync(
         VenueQuery query, CancellationToken cancellationToken = default)
     {
-        var errors = query.ValidateQuery();
+        var errors = query.ValidateQuery(cancellationToken);
         if (errors.Length > 0)
         {
             return Result<PagedResult<VenueSummaryDto>>.BadRequest(errors).LogResult(logger);
@@ -83,8 +84,8 @@ public class VenueService(AppDbContext appDbContext, IMapper mapper, ICountriesS
     public async Task<Result<VenueSummaryDto>> UpdateVenueAsync(int id, UpdateVenueDto updateVenueDto, CancellationToken cancellationToken = default)
     {
 
-        var venue = await appDbContext.Venues
-        .FindAsync(new object[] { id }, cancellationToken);
+        await using var transaction = await appDbContext.Database.BeginTransactionAsync(cancellationToken);
+        var venue = await appDbContext.LockVenueAsync(id, cancellationToken, track: true);
         if (venue is null)
         {
             return Result<VenueSummaryDto>.NotFound().LogResult(logger);
@@ -110,17 +111,13 @@ public class VenueService(AppDbContext appDbContext, IMapper mapper, ICountriesS
         {
             return Result<VenueSummaryDto>.Conflict(new Error(ErrorCodes.Conflict, "Venue name already exists")).LogResult(logger);
         }
-        var exceedsNewCapacity = await appDbContext.Events.AnyAsync(
-            e => e.VenueId == id && e.Capacity > updateVenueDto.Capacity,
-            cancellationToken);
-        if (exceedsNewCapacity)
-        {
-            return Result<VenueSummaryDto>.Conflict(new Error("Venue.CapacityBelowEvent",
-                "Venue capacity cannot be less than the capacity of an existing event there.")).LogResult(logger);
-        }
+        var capacityValidation = await venueCapacityValidator.ValidateVenueCapacityAsync(id, updateVenueDto.Capacity, cancellationToken);
+        if (!capacityValidation.IsSuccess)
+            return Result<VenueSummaryDto>.Conflict(capacityValidation.Errors.ToArray()).LogResult(logger);
 
         mapper.Map(updateVenueDto, venue);
         await appDbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return Result<VenueSummaryDto>.Success(mapper.Map<VenueSummaryDto>(venue)).LogResult(logger);
     }
 

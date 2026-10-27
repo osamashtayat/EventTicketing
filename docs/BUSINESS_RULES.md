@@ -6,11 +6,56 @@ existing ticket-category allocations and deletion while categories exist. Event
 names may repeat. Category create/update and event capacity updates now use serializable
 transactions for allocation checks and writes. Event create/update now also requires capacity no
 greater than the selected venue's capacity (400, `Event.ExceedsVenueCapacity`).
-Venue updates reject a capacity below any existing event there (409,
-`Venue.CapacityBelowEvent`). Equality is allowed in both directions. Compare
-against each event, not the sum of capacities across events, since events can
-occur at different times. These are service-level checks, not database constraints
-or guarantees against simultaneous event/venue changes.
+Event write JSON accepts MM/dd/yyyy (also ISO calendar dates) or ISO 8601 timestamps.
+Date-only starts use midnight UTC; date-only ends include the selected day and are
+converted to the following midnight. The same date for both is a valid one-day event.
+Explicit timestamps preserve exact times and offsets are normalized to UTC. Output
+remains ISO with an exclusive end instant. Reversed dates/equal timestamp instants
+are invalid; the converted end instant must follow the start.
+This parsing rule is scoped to create/update DTOs, not global configuration.
+
+At every instant, the sum of capacities of simultaneous events at a venue must be
+<= venue capacity. Event periods are [StartDate, EndDate): touching end/start times
+do not overlap. Create/update checks the peak simultaneous load, excluding the
+updated event; it does not simply sum all events that intersect the candidate.
+Over-allocation returns 409 `Event.VenueCapacityConflict`. For a venue of 10,
+overlapping capacities 5 and 6 conflict; 5 and 5 are allowed. Multiple overlapping
+events are checked together, not only pairwise.
+
+Venue capacity reductions check the entire schedule: 409 `Venue.CapacityBelowEvent`
+when an individual event exceeds the proposed capacity, or 409
+`Venue.CapacityBelowOverlappingEvents` when the combined peak exceeds it. Equality
+is allowed. Schedule writers hold venue update locks through validation and commit;
+event moves lock both venues in ID order before the event. Competing creates,
+reschedules, and venue edits therefore cannot independently overallocate capacity.
+These are service/transaction rules, not a cross-row database check constraint.
+Existing invalid schedules are not rewritten automatically; adjust their event
+capacities/dates or increase venue capacity to make them valid.
+
+## Implemented booking baseline (2026-10-27)
+
+The accepted [booking design](BOOKING_DESIGN.md) takes precedence over the older
+hold/payment proposals below. Bookings confirm immediately without payment, use USD
+price/name snapshots, and belong to the authenticated customer. All authenticated
+roles may book for themselves. Individual booking/cancellation endpoints remain
+customer-only, including for Admin. Read-only event history is available separately
+to Admin or the owning EventOrganizer.
+Missing/unowned booking IDs both return 404.
+
+Customers can cancel all remaining tickets or choose cumulative cancellation totals
+per own booking item. Reject foreign items and totals above the original quantity
+or below quantities already cancelled. New cancellation requires at least 24 hours
+before event start; exactly 24 hours is permitted. Replays that change no quantities
+return the existing state without releasing inventory again, including after cutoff.
+Cancellation decreases BookedQuantity atomically, making those tickets available
+for other customers. Preserve original quantities/totals and cancelled history.
+
+Conditional SQL claims, per-event transaction locks, and database counter constraints
+prevent overselling; booking/items and inventory commit or roll back together.
+Creation is limited to 20 tickets per request; there is no separate cancellation
+count limit. History blocks category deletion/moves, event deletion/date/venue changes,
+and category capacity below active inventory. Price/name edits affect future sales only.
+Request retries for creation are not idempotent yet; holds/payments/expiry are deferred.
 
 The remaining detailed policies below are **proposed defaults**, not all implemented
 or accepted. Review them before their milestone. Open questions must be resolved
@@ -26,8 +71,7 @@ before dependent code is written.
 - Use a serializable transaction across the allocation check and save; event capacity
   updates participate in the same isolation boundary. Aborted transactions are rolled
   back; automatic deadlock retry is not implemented.
-- Category deletion is currently allowed because bookings do not exist. Add booking
-  history/issued-ticket safeguards before introducing those capabilities.
+- Category deletion and moves are rejected once any booking history exists.
 - Category names may repeat. List filtering is by event, name/description, and inclusive
   price range; page rules reuse the shared query and result types.
 
@@ -46,8 +90,7 @@ before dependent code is written.
 - Preserve booked event/category history. Restrict destructive deletion once bookings
   exist until an explicit cancellation/archival policy is agreed.
 
-Open: field limits, draft/published/cancelled event lifecycle, overlapping venue
-use, sales windows, event-start cutoff, allocation changes, and organizer cancellation.
+Open: field limits, draft/published/cancelled event lifecycle, sales windows, event-start cutoff, allocation changes, and organizer cancellation.
 Event classification and ticket category are different concepts.
 
 ## Inventory and overselling
@@ -115,3 +158,22 @@ those snapshots, not later price changes. Do not mix currencies within one booki
 
 Record accepted decisions here and in architecture where appropriate; add tests
 for the agreed invariants instead of silently turning assumptions into requirements.
+
+## Implemented account creation
+
+Public registration always assigns User. Only an authenticated Admin may use
+POST /api/accounts to create an Admin or EventOrganizer account. New accounts get
+only their selected role; role membership does not imply other roles. Account and
+role writes are transactional. Optional first-admin bootstrap creates a new account
+only when no Admin exists and never promotes an existing account. Event ownership and existing endpoint role restrictions are implemented as described below.
+
+## Implemented authorization
+
+- Public reads remain available for countries, venues, events, and ticket categories.
+- Country/venue writes require Admin. Event creation requires Admin or EventOrganizer.
+- Event ownership uses the authenticated account ID and cannot be supplied/changed by DTOs.
+- Event and category edits/deletion require Admin or the owning EventOrganizer.
+- Category creation requires access to its event; a move requires access to both events.
+- Existing events are assigned to the Admin with the lowest user ID during migration;
+  migration stops if events exist but no Admin does. User deletion cannot cascade events.
+- Role and resource checks are separate. No organizer assignment/transfer operation exists yet.

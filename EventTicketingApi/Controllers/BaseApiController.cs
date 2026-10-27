@@ -8,6 +8,7 @@ public abstract class BaseApiController : ControllerBase
         var (status, title) = failureKind switch
         {
             FailureKind.Validation => (StatusCodes.Status400BadRequest, "Invalid request"),
+            FailureKind.Forbidden => (StatusCodes.Status403Forbidden, "Access denied"),
             FailureKind.NotFound => (StatusCodes.Status404NotFound, "Resource not found"),
             FailureKind.Conflict => (StatusCodes.Status409Conflict, "Operation conflicts with existing data"),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred")

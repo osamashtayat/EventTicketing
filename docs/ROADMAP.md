@@ -28,6 +28,11 @@ a fresh local schema, the solution builds, and positive/invalid capacity cases p
 
 ### 1.2 Venue and event CRUD
 
+Current extension: shared venue capacity is checked over simultaneous event periods
+on create/update and venue capacity edits, with transactional concurrency protection.
+Event JSON writes accept MM/dd/yyyy alongside ISO timestamps; date-only end days
+are inclusive, allowing same-day events. Internal/response end instants are exclusive.
+
 - [ ] Choose controllers or minimal APIs for the first endpoint.
 - [ ] Implement one vertical slice, beginning with venue creation and retrieval.
 - [ ] Add event CRUD and ticket-category management incrementally.
@@ -57,20 +62,23 @@ is bounded, and request/response examples describe the actual API.
 
 ### 2.1 Accounts and authorization
 
-- [ ] Introduce Identity and JWT with safe configuration and credential handling.
+- [ ] Complete Identity endpoint authentication with safe configuration and credential handling (built-in opaque bearer tokens selected, rather than custom JWT).
 - [ ] Implement registration/sign-in and Administrator, Event Organizer, Customer roles.
-- [ ] Enforce resource ownership as well as role checks on existing write operations.
-- [ ] Test unauthenticated, forbidden, owner, and authorized administrator cases.
+- [x] Enforce resource ownership as well as role checks on existing write operations.
+- [x] Test unauthenticated, forbidden, owner, and authorized administrator cases against isolated SQL Server with real Identity tokens.
 
 Complete when customers cannot grant themselves privileged roles or access another
 customer's bookings and organizers cannot manage another organizer's events.
 
 ### 2.2 Booking baseline
 
-- [ ] Agree booking transitions, cancellation policy, and inventory accounting.
-- [ ] Implement booking creation, cancellation, availability, and customer history.
-- [ ] Make booking/inventory writes atomic and protect against concurrent overselling.
-- [ ] Test insufficient capacity, repeated cancellation, rollback, and competing requests.
+See the [accepted booking design](BOOKING_DESIGN.md) for immediate confirmation, USD,
+24-hour cancellation, and partial/full inventory release. Payment/holds remain deferred.
+
+- [x] Agree booking transitions, cancellation policy, and inventory accounting.
+- [x] Implement booking creation, cancellation, availability, and customer history.
+- [x] Make booking/inventory writes atomic and protect against concurrent overselling.
+- [x] Test insufficient capacity, repeated cancellation, rollback, and competing requests.
 
 Complete when inventory never goes below zero or exceeds capacity, cancellation
 releases inventory at most once, and SQL Server tests demonstrate transaction and

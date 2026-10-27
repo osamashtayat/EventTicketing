@@ -1,5 +1,31 @@
 @EventTicketingApi_HostAddress = http://localhost:5066
 
+### Register a normal user. Supply registrationPassword privately in your HTTP client.
+POST {{EventTicketingApi_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "customer@example.com",
+  "password": "{{registrationPassword}}",
+  "firstName": "Example",
+  "lastName": "Customer"
+}
+
+### Create an organizer as an admin. Supply adminAccessToken and accountPassword privately.
+POST {{EventTicketingApi_HostAddress}}/api/accounts
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "email": "organizer@example.com",
+  "password": "{{accountPassword}}",
+  "firstName": "Example",
+  "lastName": "Organizer",
+  "role": "EventOrganizer"
+}
+
+###
+
 GET {{EventTicketingApi_HostAddress}}/weatherforecast/
 Accept: application/json
 
@@ -21,6 +47,7 @@ Accept: application/json
 ### Create a country in the local development database
 
 POST {{EventTicketingApi_HostAddress}}/api/countries
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -31,6 +58,7 @@ Content-Type: application/json
 ### Update: replace both IDs with the ID returned by POST
 
 PUT {{EventTicketingApi_HostAddress}}/api/countries/1
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -42,10 +70,12 @@ Content-Type: application/json
 ### Delete: use an existing country ID without associated venues
 
 DELETE {{EventTicketingApi_HostAddress}}/api/countries/1
+Authorization: Bearer {{accessToken}}
 
 ### Create venue: use an existing country ID
 
 POST {{EventTicketingApi_HostAddress}}/api/venues
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -63,6 +93,7 @@ GET {{EventTicketingApi_HostAddress}}/api/venues/1
 ### Update venue: route and body IDs must match
 
 PUT {{EventTicketingApi_HostAddress}}/api/venues/1
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -77,6 +108,7 @@ Content-Type: application/json
 ### Delete venue: must have no associated events
 
 DELETE {{EventTicketingApi_HostAddress}}/api/venues/1
+Authorization: Bearer {{accessToken}}
 
 
 ### List events
@@ -87,6 +119,7 @@ GET {{EventTicketingApi_HostAddress}}/api/events/1
 
 ### Create event: use an existing venue ID; send dates in UTC
 POST {{EventTicketingApi_HostAddress}}/api/events
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -100,6 +133,7 @@ Content-Type: application/json
 
 ### Full event update: route/body IDs must match
 PUT {{EventTicketingApi_HostAddress}}/api/events/1
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -114,6 +148,7 @@ Content-Type: application/json
 
 ### Delete event: remove associated ticket categories first
 DELETE {{EventTicketingApi_HostAddress}}/api/events/1
+Authorization: Bearer {{accessToken}}
 
 
 ### Paged country search (names and short names)
@@ -131,6 +166,7 @@ GET {{EventTicketingApi_HostAddress}}/api/events?pageSize=101
 
 ### Create category: use an existing event ID with sufficient unallocated capacity
 POST {{EventTicketingApi_HostAddress}}/api/ticket-categories
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -149,6 +185,7 @@ GET {{EventTicketingApi_HostAddress}}/api/ticket-categories?eventId=1&search=Gen
 
 ### Full category update: the current allocation is excluded from the capacity check
 PUT {{EventTicketingApi_HostAddress}}/api/ticket-categories/1
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
 
 {
@@ -162,3 +199,63 @@ Content-Type: application/json
 
 ### Delete category and free its allocation
 DELETE {{EventTicketingApi_HostAddress}}/api/ticket-categories/1
+Authorization: Bearer {{accessToken}}
+
+### Create a booking as the authenticated customer (use existing event/category IDs)
+POST {{EventTicketingApi_HostAddress}}/api/bookings
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "eventId": 1,
+  "items": [{ "ticketCategoryId": 1, "quantity": 2 }]
+}
+
+### Paged own booking history
+GET {{EventTicketingApi_HostAddress}}/api/bookings/mine?pageNumber=1&pageSize=10
+Authorization: Bearer {{accessToken}}
+
+### Own booking details
+GET {{EventTicketingApi_HostAddress}}/api/bookings/1
+Authorization: Bearer {{accessToken}}
+
+### Cancel all remaining tickets (at least 24 hours before event start)
+POST {{EventTicketingApi_HostAddress}}/api/bookings/1/cancel
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{}
+
+### Partial cancellation: cumulative total of 1 cancelled ticket on this own booking item
+POST {{EventTicketingApi_HostAddress}}/api/bookings/1/cancel
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "items": [{ "bookingItemId": 1, "cancelledQuantity": 1 }]
+}
+
+### Public availability (cancelled tickets become available again)
+GET {{EventTicketingApi_HostAddress}}/api/events/1/availability
+
+### Event booking history: admin or this event's organizer only
+GET {{EventTicketingApi_HostAddress}}/api/events/1/bookings?status=Confirmed&pageNumber=1&pageSize=10
+Authorization: Bearer {{accessToken}}
+
+### Current authenticated profile and roles (use the final HTTPS API URL in browsers)
+GET {{EventTicketingApi_HostAddress}}/api/auth/me
+Authorization: Bearer {{accessToken}}
+
+### One-day event: date-only end includes the selected day
+POST {{EventTicketingApi_HostAddress}}/api/events
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Amman Hall event",
+  "description": null,
+  "startDate": "02/02/2027",
+  "endDate": "02/02/2027",
+  "capacity": 5,
+  "venueId": 1
+}

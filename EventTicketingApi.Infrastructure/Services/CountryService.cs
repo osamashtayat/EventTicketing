@@ -66,7 +66,7 @@ public class CountryService(AppDbContext appDbContext, IMapper mapper, ILogger<C
     public async Task<Result<PagedResult<CountrySummaryDto>>> GetCountriesAsync(
         CountryQuery query, CancellationToken cancellationToken = default)
     {
-        var errors = query.ValidateQuery();
+        var errors = query.ValidateQuery(cancellationToken);
         if (errors.Length > 0)
         {
             return Result<PagedResult<CountrySummaryDto>>.BadRequest(errors).LogResult(logger);

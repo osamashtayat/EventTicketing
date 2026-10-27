@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authorization;
+using EventTicketingApi.Common.Constant;
 using EventTicketingApi.Application.DTOs.Common;
 using EventTicketingApi.Application.Contracts;
 using EventTicketingApi.Application.DTOs.Venues;
@@ -19,6 +21,7 @@ public class VenuesController(IVenuesService venuesService) : BaseApiController
     }
 
     [HttpPost]
+    [Authorize(Roles = RoleNames.Admin)]
     public async Task<ActionResult<VenueSummaryDto>> CreateVenueAsync(
         [FromBody] CreateVenueDto dto, CancellationToken cancellationToken)
     {
@@ -43,6 +46,7 @@ public class VenuesController(IVenuesService venuesService) : BaseApiController
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = RoleNames.Admin)]
     public async Task<ActionResult<VenueSummaryDto>> UpdateVenue(
         int id, [FromBody] UpdateVenueDto dto, CancellationToken cancellationToken)
     {
@@ -59,6 +63,7 @@ public class VenuesController(IVenuesService venuesService) : BaseApiController
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = RoleNames.Admin)]
     public async Task<IActionResult> DeleteVenue(int id, CancellationToken cancellationToken)
     {
         var result = await venuesService.DeleteVenueAsync(id, cancellationToken);

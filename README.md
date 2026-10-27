@@ -1,5 +1,222 @@
 # Event Ticketing API
 
+**Frontend handoff:** [complete API reference](docs/FRONTEND_API.md) and
+[TypeScript wire contracts](docs/frontend-api.ts), covering all current routes,
+authentication, permissions, examples, filters, and response limitations.
+
+## Shared venue scheduling capacity
+
+Event POST/PUT accepts date-only `MM/dd/yyyy`, for example start `02/02/2027` and
+end `02/02/2027` for a one-day event, in addition to ISO timestamps. Date-only starts
+mean midnight UTC; date-only ends include the selected day and become the next
+midnight internally. Exact ISO timestamps keep their supplied times. Reversed or
+invalid ranges return 400. Responses stay ISO with the internal exclusive end.
+No converter is applied globally to booking dates or event query filters.
+
+Event create/update checks the sum of capacities of all simultaneous events against
+venue capacity, with HTTP 409 `Event.VenueCapacityConflict` on overflow. Periods use
+[start, end): events that finish exactly when another starts do not overlap. The
+validator checks the peak simultaneous load across the requested window, excludes
+the current event during updates, and supports more than two events. For a venue
+of 10, overlapping 5 + 6 is rejected, while 5 + 5 is accepted. Two non-overlapping
+6-capacity events may share a long 4-capacity event because their peak is only 10.
+
+Venue updates also reject a capacity below the full schedule's peak (409
+`Venue.CapacityBelowOverlappingEvents`). Create, reschedule/move, and venue edits
+share venue database locks through commit; moves lock both venues in ID order.
+Booking/category operations retain their event-first locks after the schedule's
+venue locks. Public browsing and existing ownership/history restrictions remain.
+
+No migration/package is needed. Existing schedules are not silently modified.
+The full suite includes real SQL/HTTP concurrency cases for competing creates,
+rescheduling, and venue reduction, plus interval boundaries, equality, containment,
+three-way overlaps, update self-exclusion, and non-simultaneous overlaps.
+
+## Frontend connection
+
+`GET /api/auth/me` requires an authenticated request and returns only the caller's
+Id, Email, FirstName, LastName, and Roles. Send `Authorization: Bearer <accessToken>`.
+Anonymous/invalid-token requests receive 401. Responses are marked no-store; password
+hashes, security stamps, and tokens are never included. Roles are read from Identity's
+database; after changing a role, sign in again to update token authorization claims.
+UI role-based navigation does not replace server authorization.
+
+CORS uses `Cors:AllowedOrigins`, with exact origins and no trailing slash. Development
+allows `http://localhost:5173` and `http://localhost:3000`. Other environments default
+to an empty list; configure the deployed frontend origin in environment-specific
+settings or `Cors__AllowedOrigins__0`. Do not put paths or wildcard origins there.
+Bearer requests can use Authorization and Content-Type headers, and JavaScript can
+read the Location response header. Credentialed cross-origin cookies are not enabled.
+Unlisted origins get no Access-Control-Allow-Origin header; CORS is a browser rule,
+not an API authorization mechanism.
+
+Call the API's final HTTPS URL directly (for example `https://localhost:7209`) so
+browser preflights do not encounter HTTP-to-HTTPS redirects. Use login with
+`useCookies=false`, then fetch `/api/auth/me` for the current profile/roles. Refresh
+expired tokens through the existing refresh endpoint. The frontend can now build
+browsing, login, booking, and management screens against these endpoints.
+
+Verification: 45 total tests pass, including real-token current-user responses,
+anonymous/invalid-token failures, allowed/denied preflights, CORS headers on 401,
+Location exposure, and origin configuration validation. No migration is needed.
+
+## Bookings
+
+[Accepted design](docs/BOOKING_DESIGN.md): immediate confirmation, USD, and cancellation
+at least 24 hours before event start (equality is allowed). Any authenticated role
+can book for itself. Individual booking reads and cancellation are customer-scoped; unowned IDs
+return 404, including for admins. Admins and the event owner can separately read
+all bookings through the authorized event-history endpoint. Public availability contains no customer information.
+
+| Method/path | Behavior |
+| --- | --- |
+| POST /api/bookings | EventId and category/quantity items; 201 with Location |
+| GET /api/bookings/mine | Paged own history; eventId/status filters |
+| GET /api/bookings/{id} | Own booking details |
+| GET /api/events/{id}/bookings | Admin/owning organizer event history, with status/paging |
+| POST /api/bookings/{id}/cancel | `{}` cancels all remaining tickets |
+| GET /api/events/{eventId}/availability | Public capacity/booked/available and USD prices |
+
+Partial cancellation body: `{"items":[{"bookingItemId":1,"cancelledQuantity":2}]}`.
+CancelledQuantity is the desired cumulative total, not an increment. The server checks
+that items belong to the booking and quantities never exceed purchased tickets.
+Cancelled tickets become available for someone else immediately after commit.
+Replays never release inventory twice. At fewer than 24 hours before start, new
+cancellations return 409; no-op replays still return the current state.
+
+A booking contains one event, distinct categories, and up to 20 tickets. Prices,
+customer identity, USD currency, and totals are server-controlled. Responses preserve
+original TotalAmount and quantities and expose CancelledAmount/RemainingAmount.
+Status values are Confirmed=0, PartiallyCancelled=1, Cancelled=2. Snapshot unit prices
+use decimal(18,2), totals decimal(20,2). Existing category prices are treated as USD.
+No payment/refund, holds, issued tickets, or create-request idempotency is implemented.
+
+Booking mutations lock their event during short database transactions and conditionally
+claim/release category inventory. All items succeed or all roll back. Recognized SQL
+deadlocks return retryable 409; unexpected errors go through the existing error handler.
+Categories with booking history cannot be deleted/moved, capacity cannot fall below
+booked tickets, and events with history cannot be deleted/rescheduled/moved. Cancelled
+bookings retain these history protections. Price/name changes affect new bookings only.
+
+Apply the reviewed `AddBookings` migration to your local configured database before
+running the updated API (it also applies any earlier pending migrations):
+
+```sh
+dotnet ef database update --project EventTicketingApi.Infrastructure --startup-project EventTicketingApi -- --environment Development
+```
+
+No application database migration was applied during implementation. The migration
+adds Bookings/BookingItems, a zero-initialized BookedQuantity counter, indexes, foreign
+keys, and check constraints; it removes no existing business data.
+
+`BookingsService` shares authentication/DTO validation in ValidateRequest and extracts
+inventory reservation, owned-booking locking, cancellation-target validation, inventory
+release, and status updates into private helpers. Creation/cancellation still own their
+transaction boundaries. Personal and event history share filtering, ordering, paging,
+and DTO projection. Event history performs role and ownership checks in the service,
+not just in the controller. It is read-only and does not grant cancellation rights.
+An unrelated organizer receives 403; an authorized caller requesting a missing event
+receives 404. It includes bookings from every customer of that event, including
+cancelled ones unless status is filtered, without returning customer email/credentials.
+
+### Booking integration tests
+
+`EventTicketingApi.IntegrationTests` uses xUnit and real HTTP/Identity/SQL Server.
+Start local SQL Server on port 1434, configure API User Secrets or the environment
+variable EVENT_TICKETING_TEST_CONNECTION, then run:
+
+```sh
+dotnet test EventTicketingApi.slnx
+```
+
+Tests reject nonlocal database servers and use unique temporary databases, which are
+deleted afterward. The application's database is never used for test writes. The
+SQL login needs permission to create/drop these temporary databases. Twelve tests passed,
+including ownership, released-ticket rebooking, cutoff boundaries, race conditions,
+rollback, history guards, and monetary bounds. Existing NuGet warnings remain.
+
+## Authorization and event ownership
+
+Reads for countries, venues, events, and ticket categories remain public. Country
+and venue writes require Admin. Event creation requires Admin or EventOrganizer;
+the service assigns OrganizerId from the signed-in account, never the request body.
+Event update/delete and ticket-category writes require Admin or the event's owning
+EventOrganizer. Category moves require access to both source and destination events.
+Ownership stays unchanged on event updates; ownership transfer is not implemented.
+Unauthenticated writes return 401, insufficient roles/ownership return 403, and
+missing resources return 404 for permitted callers. Controllers enforce roles;
+shared Infrastructure EventAccess enforces ownership in event/category services.
+Application's ICurrentUser is implemented in API using authentication claims;
+Domain references only the string user ID and remains independent of Identity.
+
+Before running the updated API, apply the reviewed migration:
+
+```sh
+dotnet ef database update --project EventTicketingApi.Infrastructure --startup-project EventTicketingApi -- --environment Development
+```
+
+`AddEventOrganizer` adds a required, indexed foreign key to AspNetUsers with no
+cascade delete. Existing events receive the Admin user with the lowest user ID
+(sorted by SQL Server); this is a backfill policy, not an account creation timestamp.
+If events exist without an Admin, migration fails instead of inventing an owner.
+It creates no accounts and removes no events. Ownership migration was tested only
+in isolated databases, not applied to the application's database.
+
+Verification: real Identity bearer tokens and isolated SQL Server HTTP checks cover
+public reads, 401/403, organizer ownership, Admin overrides, category moves between
+owners, owner spoofing, and legacy-event backfill. Test databases are deleted afterward.
+Existing package vulnerability warnings remain.
+
+## Identity role setup
+
+The API calls `Infrastructure/Identity/IdentitySeeder.cs` during startup to create
+missing `User`, `EventOrganizer`, and `Admin` roles through Identity's RoleManager.
+Existing roles are left in place. Apply the Identity migration to the configured
+database before starting the API. Database or role-creation failures stop startup;
+startup does not apply migrations automatically. This seeds role definitions only:
+it does not create accounts or assign role membership during registration.
+
+`IAuthService` is implemented by Infrastructure's `AuthService`. Public registration
+at `POST /api/auth/register` accepts email, password, firstName, and lastName and
+always assigns User, even if a client includes an extra role field. The API replaces
+Identity's built-in registration handler at that route; login, refresh, and other
+Identity endpoints retain their `/api/auth` URLs. Registration returns 200 or 400;
+unexpected failures use the safe 500 response. Password rules and hashing are owned
+by Identity. Existing accounts are not automatically assigned roles.
+
+`POST /api/accounts` requires an authenticated Admin and accepts the same fields plus
+`role`, limited to Admin or EventOrganizer. It returns 201 with no response body;
+anonymous callers receive 401 and other roles receive 403. Both creation flows reuse
+one service helper and one transaction for account creation and role assignment.
+Failures roll back both writes. Controllers/handlers only translate HTTP; validation,
+Identity operations, and logging live in the service. Credentials are never logged.
+
+### First admin
+
+First-admin bootstrapping is off by default. In API User Secrets or environment
+configuration, set `BootstrapAdmin:Enabled` to true, `BootstrapAdmin:Email` to a new
+account email, and `BootstrapAdmin:Password` to a strong password. Optional
+`BootstrapAdmin:FirstName` and `BootstrapAdmin:LastName` default to Initial and
+Administrator. Environment variables use double underscores, for example
+`BootstrapAdmin__Enabled`. Keep credentials out of tracked configuration files.
+
+After applying the Identity migration, start the API. If no Admin exists, it creates
+that account and assigns Admin using the same transactional service. It skips when
+an Admin already exists, never resets a password, and never promotes an existing
+public account. Invalid configuration or a duplicate account causes startup failure
+with error codes only. Disable bootstrapping and remove its password from configuration
+after the first successful setup. No account or database was created during implementation.
+Concurrent multi-instance bootstrap is not supported; run initial setup on one instance.
+
+Sign in through `/api/auth/login?useCookies=false` as the admin and send its access
+token as `Authorization: Bearer <token>` to `/api/accounts`. The created admins and
+organizers can then sign in through the same login endpoint. Business endpoint permissions and ownership are described above.
+
+Verification: solution build and nine isolated HTTP checks with fake services and
+authentication covered registration replacement, input errors, anonymous/forbidden
+access, Admin creation, organizer creation, and invalid roles. These checks do not
+prove real SQL persistence, transaction rollback, bootstrap, or Identity token behavior.
+
 ## Ticket-category HTTP slice
 
 `ITicketCategoriesService` and its DTOs/mapping profile live in Application;
@@ -30,8 +247,7 @@ event. Deleting a category removes its allocation; there are no bookings yet to 
 Category create/update and event update use serializable database transactions so
 allocation checks and writes cannot interleave into an over-allocation. Transactions
 may deadlock under contention; a database-aborted request follows the global error/log
-path rather than being automatically retried. Concurrent venue-capacity edits remain
-outside this allocation guarantee. No new packages or migrations are required.
+path rather than being automatically retried. Venue scheduling edits now also coordinate through venue locks as described above. No new packages or migrations are required.
 
 Verification: build and 49 temporary real HTTP/SQL Server checks passed, covering
 mapping, CRUD, price/quantity bounds, allocation equality/overflow, moves, filtered
@@ -40,6 +256,11 @@ used a separate database that was removed; EventTicketingDb was unchanged.
 
 
 ## Service outcomes, pagination, and filters
+
+Application's `Validation/DtoValidator.cs` centralizes null/cancellation guards and
+DataAnnotations validation for registration, events, ticket categories, and paging
+queries. Callers supply their existing error code and handle Result creation and
+logging. Resource-specific date, price, and database rules remain in their services.
 
 All public Result-returning methods in CountryService, VenueService, EventService, and TicketCategoryService
 use Infrastructure's shared `LogResult` helper. It returns the same Result unchanged
@@ -149,7 +370,7 @@ ID, nondefault dates with end after start, an existing venue, and event capacity
 greater than venue capacity. Oversized events return 400. Venue updates return 409
 if the new capacity is below any existing event's capacity; equality is valid.
 For example, a venue with an event capped at 400 cannot be reduced to 300, but can
-be reduced to 400. Capacities of different events are not added together. Update rejects
+be reduced to 400. Capacities are added only while their time intervals overlap. Update rejects
 mismatched route/body IDs and a capacity below existing ticket-category allocations.
 Deletion returns 409 while ticket categories exist. Event names need not be unique.
 No database schema change is needed. Examples are in the `.http` file; send UTC dates
@@ -193,7 +414,7 @@ are in `EventTicketingApi/EventTicketingApi.http`.
 
 Request DTO annotations are validated by `[ApiController]`. Service failures map
 to 400 (validation), 404 (missing), 409 (conflict), or 500 (unexpected failure).
-These learning endpoints currently have no authentication. Requests that access
+Reads are public; writes now follow the authorization rules above. Requests that access
 the database require the local SQL Server container, connection configuration,
 and applied migrations described during setup. The original scaffold overview
 below records the starting point rather than this slice's implementation status.

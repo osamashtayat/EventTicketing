@@ -1,9 +1,11 @@
+using EventTicketingApi.Infrastructure.Validation;
+using EventTicketingApi.Infrastructure.Identity;
 using System.Data;
 using EventTicketingApi.Application.DTOs.Common;
 using EventTicketingApi.Infrastructure.Pagination;
 using EventTicketingApi.Infrastructure.Logging;
 using Microsoft.Extensions.Logging;
-using System.ComponentModel.DataAnnotations;
+using EventTicketingApi.Application.Validation;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using EventTicketingApi.Application.Contracts;
@@ -15,12 +17,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EventTicketingApi.Infrastructure.Services;
 
-public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<EventService> logger) : IEventsService
+public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<EventService> logger, ICurrentUser currentUser, EventAccess eventAccess, VenueCapacityValidator venueCapacityValidator) : IEventsService
 {
     public async Task<Result<PagedResult<EventDto>>> GetEventsAsync(
         EventQuery query, CancellationToken cancellationToken = default)
     {
-        var errors = query.ValidateQuery();
+        var errors = query.ValidateQuery(cancellationToken);
         if (errors.Length > 0)
         {
             return Result<PagedResult<EventDto>>.BadRequest(errors).LogResult(logger);
@@ -76,39 +78,76 @@ public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<Eve
     public async Task<Result<EventDto>> CreateEventAsync(
         CreateEventDto dto, CancellationToken cancellationToken = default)
     {
-        var validation = await ValidateEventAsync(dto, cancellationToken);
+        if (!eventAccess.CanManage)
+        {
+            return Result<EventDto>.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+
+        await using var transaction = await appDbContext.Database.BeginTransactionAsync(cancellationToken);
+        var validation = await ValidateEventAsync(dto, null, cancellationToken);
         if (!validation.IsSuccess)
         {
             return ValidationFailure(validation).LogResult(logger);
         }
 
         var eventEntity = mapper.Map<Event>(dto);
+        eventEntity.OrganizerId = currentUser.Id!;
         appDbContext.Events.Add(eventEntity);
         await appDbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return Result<EventDto>.Success(mapper.Map<EventDto>(eventEntity)).LogResult(logger);
     }
 
     public async Task<Result<EventDto>> UpdateEventAsync(
         int id, UpdateEventDto dto, CancellationToken cancellationToken = default)
     {
+        if (!eventAccess.CanManage)
+        {
+            return Result<EventDto>.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+
         if (id != dto.Id)
         {
             return Result<EventDto>.BadRequest(
                 new Error("Event.IdMismatch", "Route ID and body ID must match.")).LogResult(logger);
         }
 
+        var sourceVenueId = await appDbContext.Events.AsNoTracking().Where(e => e.Id == id)
+            .Select(e => (int?)e.VenueId).SingleOrDefaultAsync(cancellationToken);
+        if (!sourceVenueId.HasValue)
+            return Result<EventDto>.NotFound(MissingEvent()).LogResult(logger);
+
         await using var transaction = await appDbContext.Database.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
-        var eventEntity = await appDbContext.Events.FindAsync(new object[] { id }, cancellationToken);
+        foreach (var venueId in new[] { sourceVenueId.Value, dto.VenueId }.Distinct().Order())
+            await appDbContext.LockVenueAsync(venueId, cancellationToken);
+        var eventEntity = await appDbContext.LockEventAsync(id, cancellationToken, track: true);
         if (eventEntity is null)
         {
             return Result<EventDto>.NotFound(MissingEvent()).LogResult(logger);
         }
 
-        var validation = await ValidateEventAsync(dto, cancellationToken);
+        if (eventEntity.VenueId != sourceVenueId.Value)
+            return Result<EventDto>.Conflict(new Error("Event.RetryRequired",
+                "The event moved during this request. Retry the operation.")).LogResult(logger);
+
+        var access = eventAccess.CheckOwner(eventEntity.OrganizerId);
+        if (!access.IsSuccess)
+        {
+            return Result<EventDto>.Forbidden(access.Errors.ToArray()).LogResult(logger);
+        }
+
+        var validation = await ValidateEventAsync(dto, id, cancellationToken);
         if (!validation.IsSuccess)
         {
             return ValidationFailure(validation).LogResult(logger);
+        }
+
+        if ((dto.StartDate != eventEntity.StartDate || dto.EndDate != eventEntity.EndDate || dto.VenueId != eventEntity.VenueId) &&
+            await appDbContext.Bookings.AnyAsync(b => b.EventId == id, cancellationToken))
+        {
+            return Result<EventDto>.Conflict(new Error("Event.HasBookingHistory",
+                "Cannot change event dates or venue after tickets have been booked.")).LogResult(logger);
         }
 
         var allocatedCapacity = await appDbContext.TicketCategories
@@ -128,10 +167,28 @@ public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<Eve
 
     public async Task<Result> DeleteEventAsync(int id, CancellationToken cancellationToken = default)
     {
-        var eventEntity = await appDbContext.Events.FindAsync(new object[] { id }, cancellationToken);
+        if (!eventAccess.CanManage)
+        {
+            return Result.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+
+        await using var transaction = await appDbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        var eventEntity = await appDbContext.LockEventAsync(id, cancellationToken, track: true);
         if (eventEntity is null)
         {
             return Result.NotFound(MissingEvent()).LogResult(logger);
+        }
+
+        var access = eventAccess.CheckOwner(eventEntity.OrganizerId);
+        if (!access.IsSuccess)
+        {
+            return Result.Forbidden(access.Errors.ToArray()).LogResult(logger);
+        }
+
+        if (await appDbContext.Bookings.AnyAsync(b => b.EventId == id, cancellationToken))
+        {
+            return Result.Conflict(new Error("Event.HasBookingHistory", "Cannot delete an event with booking history.")).LogResult(logger);
         }
 
         if (await appDbContext.TicketCategories.AnyAsync(t => t.EventId == id, cancellationToken))
@@ -142,16 +199,14 @@ public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<Eve
 
         appDbContext.Events.Remove(eventEntity);
         await appDbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return Result.Success().LogResult(logger);
     }
 
     // Shared by create/update, including callers outside the HTTP pipeline.
-    private async Task<Result> ValidateEventAsync(CreateEventDto dto, CancellationToken cancellationToken)
+    private async Task<Result> ValidateEventAsync(CreateEventDto dto, int? excludedEventId, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var validationResults = new List<ValidationResult>();
-        Validator.TryValidateObject(dto, new ValidationContext(dto), validationResults, validateAllProperties: true);
-        var errors = validationResults.Select(v => new Error("Event.InvalidInput", v.ErrorMessage!)).ToList();
+        var errors = DtoValidator.Validate(dto, "Event.InvalidInput", cancellationToken).ToList();
 
         if (dto.StartDate == default || dto.EndDate == default || dto.EndDate <= dto.StartDate)
         {
@@ -163,28 +218,15 @@ public class EventService(AppDbContext appDbContext, IMapper mapper, ILogger<Eve
             return Result.BadRequest(errors.ToArray());
         }
 
-        var venue = await appDbContext.Venues.AsNoTracking()
-            .Where(v => v.Id == dto.VenueId)
-            .Select(v => new { v.Capacity })
-            .FirstOrDefaultAsync(cancellationToken);
-        if (venue is null)
-        {
-            return Result.NotFound(new Error("Venue.NotFound", "Venue not found."));
-        }
-
-        if (dto.Capacity > venue.Capacity)
-        {
-            return Result.BadRequest(new Error("Event.ExceedsVenueCapacity",
-                "Event capacity cannot exceed the selected venue's capacity."));
-        }
-
-        return Result.Success();
+        return await venueCapacityValidator.ValidateEventAsync(dto, excludedEventId, cancellationToken);
     }
 
-    private static Result<EventDto> ValidationFailure(Result validation) =>
-        validation.FailureKind == FailureKind.NotFound
-            ? Result<EventDto>.NotFound(validation.Errors.ToArray())
-            : Result<EventDto>.BadRequest(validation.Errors.ToArray());
+    private static Result<EventDto> ValidationFailure(Result validation) => validation.FailureKind switch
+    {
+        FailureKind.NotFound => Result<EventDto>.NotFound(validation.Errors.ToArray()),
+        FailureKind.Conflict => Result<EventDto>.Conflict(validation.Errors.ToArray()),
+        _ => Result<EventDto>.BadRequest(validation.Errors.ToArray())
+    };
 
     private static Error MissingEvent() => new("Event.NotFound", "Event not found.");
 }

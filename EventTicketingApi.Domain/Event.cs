@@ -9,5 +9,6 @@ public class Event
     public required DateTime EndDate { get; set; }
     public required int Capacity { get; set; }
     public required Venue Venue { get; set; }
+    public string OrganizerId { get; set; } = string.Empty;
     public int VenueId { get; set; }
 }

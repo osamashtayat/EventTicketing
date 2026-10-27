@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authorization;
+using EventTicketingApi.Common.Constant;
 using EventTicketingApi.Application.DTOs.Common;
 using EventTicketingApi.Application.Contracts;
 using EventTicketingApi.Application.DTOs.Countries;
@@ -47,6 +49,7 @@ public class CountriesController(ICountriesService countriesService) : BaseApiCo
     }
 
     [HttpPost]
+    [Authorize(Roles = RoleNames.Admin)]
     public async Task<ActionResult<GetCountryDto>> CreateCountry(
         [FromBody] CreateCountryDto dto, CancellationToken cancellationToken)
     {
@@ -61,6 +64,7 @@ public class CountriesController(ICountriesService countriesService) : BaseApiCo
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = RoleNames.Admin)]
     public async Task<IActionResult> UpdateCountry(
         int id, [FromBody] UpdateCountryDto dto, CancellationToken cancellationToken)
     {
@@ -77,6 +81,7 @@ public class CountriesController(ICountriesService countriesService) : BaseApiCo
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = RoleNames.Admin)]
     public async Task<IActionResult> DeleteCountry(int id, CancellationToken cancellationToken)
     {
         var result = await countriesService.DeleteCountryAsync(id, cancellationToken);

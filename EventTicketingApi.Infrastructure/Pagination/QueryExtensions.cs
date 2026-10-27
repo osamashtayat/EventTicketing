@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+using EventTicketingApi.Application.Validation;
 using EventTicketingApi.Application.DTOs.Common;
 using EventTicketingApi.Common.Results;
 using Microsoft.EntityFrameworkCore;
@@ -7,12 +7,8 @@ namespace EventTicketingApi.Infrastructure.Pagination;
 
 internal static class QueryExtensions
 {
-    public static Error[] ValidateQuery(this PageQuery query)
-    {
-        var results = new List<ValidationResult>();
-        Validator.TryValidateObject(query, new ValidationContext(query), results, validateAllProperties: true);
-        return results.Select(r => new Error("Query.Invalid", r.ErrorMessage!)).ToArray();
-    }
+    public static Error[] ValidateQuery(this PageQuery query, CancellationToken cancellationToken = default) =>
+        DtoValidator.Validate(query, "Query.Invalid", cancellationToken);
 
     // Call only after validation, filtering, and deterministic ordering.
     public static async Task<PagedResult<T>> ToPagedResultAsync<T>(

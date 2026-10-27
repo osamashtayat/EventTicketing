@@ -5,23 +5,25 @@
 This is an educational C# backend and portfolio project for discovering events,
 managing venues and ticket categories, and booking tickets. Help the developer
 learn by explaining the relevant concept, a small next step, and its trade-offs.
-Implement requested changes by default unless the developer asks for explanation
-or review only. For users and authentication, default to guidance and review while
-the developer implements them. Implement only the requested slice and current milestone. Ask before
-significant architectural changes or work outside the current phase.
+Implement requested changes by default, including users and authentication, unless
+explicitly asked for guidance, explanation, or review only. Complete the requested
+slice, briefly explain what changed and its verification, then suggest the next step.
+Give detailed explanations when requested. Ask before significant architectural
+changes or work outside the requested phase.
 
 ## Current stack and boundaries
 
-- All four projects target .NET 10 with nullable reference types and implicit usings.
-- ASP.NET Core currently contains the template weather endpoint and OpenAPI support.
-- EF Core, SQL Server, Identity/JWT, validation libraries, and xUnit are planned,
-  not installed. Inspect project files before assuming a dependency exists.
+- Five production projects and one xUnit integration-test project target .NET 10.
+- ASP.NET Core controllers/OpenAPI/Scalar, EF Core SQL Server, AutoMapper, Identity's
+  built-in opaque bearer tokens, and DataAnnotations are installed. No custom JWT.
+- Inspect actual project files before adding dependencies.
 - `EventTicketingApi`: HTTP endpoints, request/response handling, DI composition.
 - `EventTicketingApi.Application`: use cases, DTOs, service contracts and orchestration.
 - `EventTicketingApi.Domain`: entities, value objects, business rules; no project references.
 - `EventTicketingApi.Common`: small framework-independent shared utilities; no project references.
-- Keep API → Application/Common and Application → Domain/Common. Never reverse these
-  references or use Common as a catch-all. Persistence placement is still undecided.
+- Infrastructure owns EF, Identity, and concrete services; it references Application/Domain.
+- API references Application/Infrastructure/Common; Application references Domain/Common.
+  Never reverse these references or use Common as a catch-all.
 
 ## Change conventions
 
@@ -46,8 +48,11 @@ dotnet build EventTicketingApi.slnx --no-restore
 dotnet run --project EventTicketingApi/EventTicketingApi.csproj --launch-profile http
 ```
 
-There are no test projects yet. Once xUnit projects exist and belong to the solution,
-run `dotnet test EventTicketingApi.slnx` (or the affected test project). A successful
+Run `dotnet test EventTicketingApi.slnx` (or the affected test project).
+Integration tests require local SQL Server at localhost,1434 via API User Secrets
+or EVENT_TICKETING_TEST_CONNECTION. Each test migrates/deletes its own uniquely
+named database; never target the application database for test setup or cleanup.
+A successful
 build or test command with no discovered tests is not evidence of tested features.
 Run meaningful checks for each change and report what ran, what passed, and what
 could not be verified. Documentation-only changes need link/content checks, not new tests.

@@ -13,7 +13,8 @@ public enum FailureKind
     Failure,
     Validation,
     NotFound,
-    Conflict
+    Conflict,
+    Forbidden
 }
 
 public sealed class Result
@@ -33,6 +34,7 @@ public sealed class Result
     public static Result Failure(params Error[] errors) => new(FailureKind.Failure, errors);
     public static Result NotFound(params Error[] errors) => new(FailureKind.NotFound, errors);
     public static Result BadRequest(params Error[] errors) => new(FailureKind.Validation, errors);
+    public static Result Forbidden(params Error[] errors) => new(FailureKind.Forbidden, errors);
     public static Result Conflict(params Error[] errors) => new(FailureKind.Conflict, errors);
 
     // Aggregate errors while retaining the first failure's category.
@@ -76,6 +78,7 @@ public sealed class Result<T>
     public static Result<T> Failure(params Error[] errors) => new(FailureKind.Failure, default, errors);
     public static Result<T> NotFound(params Error[] errors) => new(FailureKind.NotFound, default, errors);
     public static Result<T> BadRequest(params Error[] errors) => new(FailureKind.Validation, default, errors);
+    public static Result<T> Forbidden(params Error[] errors) => new(FailureKind.Forbidden, default, errors);
     public static Result<T> Conflict(params Error[] errors) => new(FailureKind.Conflict, default, errors);
 
     public Result<K> Map<K>(Func<T, K> mapFunc)

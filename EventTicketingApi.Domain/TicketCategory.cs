@@ -7,6 +7,7 @@ public class TicketCategory
     public required decimal Price { get; set; }
     public  string? Description { get; set; }
     public int Capacity { get; set; }
+    public int BookedQuantity { get; set; }
     public int EventId { get; set; }
 public required Event Event { get; set; }
 }

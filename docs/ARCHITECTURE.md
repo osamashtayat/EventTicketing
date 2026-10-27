@@ -1,6 +1,24 @@
 # Architecture
 
-## Implemented structure
+## Current ownership implementation
+
+Infrastructure owns EF/Identity and service implementations, referencing Application
+and Domain. API references Infrastructure for DI. Application holds contracts, DTOs,
+and mappings; Domain and Common remain independent. `ICurrentUser` is an Application
+contract implemented by API's `HttpCurrentUser`. Infrastructure's `EventAccess`
+uses it for service ownership checks. Controllers restrict write roles; services
+verify event ownership without depending on HTTP. Event stores only OrganizerId,
+with the Identity foreign key configured in Infrastructure. The scaffold overview
+below is historical, not the current dependency/package inventory.
+
+`Domain/EventCapacitySchedule` computes the peak simultaneous scheduled capacity.
+Infrastructure's VenueCapacityValidator loads relevant periods and validates them
+under venue locks. Event creation/rescheduling and venue edits hold those locks
+through commit, taking both venues in ID order for moves before the event lock.
+Existing booking/category mutations use their event locks and share no UI concerns.
+There is no new schema or dependency for this scheduling rule.
+
+## Initial scaffold structure
 
 `EventTicketingApi.slnx` contains four .NET 10 projects:
 

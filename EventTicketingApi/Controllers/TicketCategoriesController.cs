@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authorization;
+using EventTicketingApi.Common.Constant;
 using EventTicketingApi.Application.Contracts;
 using EventTicketingApi.Application.DTOs.Common;
 using EventTicketingApi.Application.DTOs.TicketCategories;
@@ -25,6 +27,7 @@ public class TicketCategoriesController(ITicketCategoriesService categoriesServi
     }
 
     [HttpPost]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.EventOrganizer)]
     public async Task<ActionResult<TicketCategoryDto>> CreateTicketCategory(
         [FromBody] CreateTicketCategoryDto dto, CancellationToken cancellationToken)
     {
@@ -38,6 +41,7 @@ public class TicketCategoriesController(ITicketCategoriesService categoriesServi
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.EventOrganizer)]
     public async Task<ActionResult<TicketCategoryDto>> UpdateTicketCategory(
         int id, [FromBody] UpdateTicketCategoryDto dto, CancellationToken cancellationToken)
     {
@@ -46,6 +50,7 @@ public class TicketCategoriesController(ITicketCategoriesService categoriesServi
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = RoleNames.Admin + "," + RoleNames.EventOrganizer)]
     public async Task<IActionResult> DeleteTicketCategory(int id, CancellationToken cancellationToken)
     {
         var result = await categoriesService.DeleteTicketCategoryAsync(id, cancellationToken);

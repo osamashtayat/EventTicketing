@@ -1,4 +1,5 @@
-using System.ComponentModel.DataAnnotations;
+using EventTicketingApi.Infrastructure.Identity;
+using EventTicketingApi.Application.Validation;
 using System.Data;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
@@ -16,12 +17,12 @@ using Microsoft.Extensions.Logging;
 namespace EventTicketingApi.Infrastructure.Services;
 
 public class TicketCategoryService(
-    AppDbContext appDbContext, IMapper mapper, ILogger<TicketCategoryService> logger) : ITicketCategoriesService
+    AppDbContext appDbContext, IMapper mapper, ILogger<TicketCategoryService> logger, EventAccess eventAccess) : ITicketCategoriesService
 {
     public async Task<Result<PagedResult<TicketCategoryDto>>> GetTicketCategoriesAsync(
         TicketCategoryQuery query, CancellationToken cancellationToken = default)
     {
-        var errors = query.ValidateQuery();
+        var errors = query.ValidateQuery(cancellationToken);
         if (errors.Length > 0)
         {
             return Result<PagedResult<TicketCategoryDto>>.BadRequest(errors).LogResult(logger);
@@ -65,7 +66,12 @@ public class TicketCategoryService(
     public async Task<Result<TicketCategoryDto>> CreateTicketCategoryAsync(
         CreateTicketCategoryDto dto, CancellationToken cancellationToken = default)
     {
-        var errors = ValidateInput(dto);
+        if (!eventAccess.CanManage)
+        {
+            return Result<TicketCategoryDto>.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+
+        var errors = ValidateInput(dto, cancellationToken);
         if (errors.Length > 0)
         {
             return Result<TicketCategoryDto>.BadRequest(errors).LogResult(logger);
@@ -73,6 +79,7 @@ public class TicketCategoryService(
 
         await using var transaction = await appDbContext.Database.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
+        await appDbContext.LockEventAsync(dto.EventId, cancellationToken);
         var allocation = await ValidateAllocationAsync(dto, null, cancellationToken);
         if (!allocation.IsSuccess)
         {
@@ -89,23 +96,57 @@ public class TicketCategoryService(
     public async Task<Result<TicketCategoryDto>> UpdateTicketCategoryAsync(
         int id, UpdateTicketCategoryDto dto, CancellationToken cancellationToken = default)
     {
+        if (!eventAccess.CanManage)
+        {
+            return Result<TicketCategoryDto>.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+
         if (id != dto.Id)
         {
             return Result<TicketCategoryDto>.BadRequest(new Error("TicketCategory.IdMismatch",
                 "Route ID and body ID must match.")).LogResult(logger);
         }
-        var errors = ValidateInput(dto);
+        var errors = ValidateInput(dto, cancellationToken);
         if (errors.Length > 0)
         {
             return Result<TicketCategoryDto>.BadRequest(errors).LogResult(logger);
         }
 
+        var sourceEventId = await appDbContext.TicketCategories.AsNoTracking().Where(t => t.Id == id)
+            .Select(t => (int?)t.EventId).SingleOrDefaultAsync(cancellationToken);
+        if (!sourceEventId.HasValue)
+        {
+            return Result<TicketCategoryDto>.NotFound(MissingCategory()).LogResult(logger);
+        }
+
         await using var transaction = await appDbContext.Database.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
+        foreach (var eventId in new[] { sourceEventId.Value, dto.EventId }.Distinct().Order())
+            await appDbContext.LockEventAsync(eventId, cancellationToken);
         var category = await appDbContext.TicketCategories.FindAsync(new object[] { id }, cancellationToken);
         if (category is null)
         {
             return Result<TicketCategoryDto>.NotFound(MissingCategory()).LogResult(logger);
+        }
+        if (category.EventId != sourceEventId.Value)
+        {
+            return Result<TicketCategoryDto>.Conflict(new Error("TicketCategory.RetryRequired",
+                "The category moved during this request. Retry the operation.")).LogResult(logger);
+        }
+        var access = await eventAccess.CheckEventAsync(category.EventId, cancellationToken);
+        if (!access.IsSuccess)
+        {
+            return Result<TicketCategoryDto>.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+        if (dto.Capacity < category.BookedQuantity)
+        {
+            return Result<TicketCategoryDto>.Conflict(new Error("TicketCategory.CapacityBooked",
+                "Capacity cannot be less than the active booked quantity.")).LogResult(logger);
+        }
+        if (dto.EventId != category.EventId && await appDbContext.BookingItems.AnyAsync(i => i.TicketCategoryId == id, cancellationToken))
+        {
+            return Result<TicketCategoryDto>.Conflict(new Error("TicketCategory.HasBookingHistory",
+                "Cannot move a category with booking history.")).LogResult(logger);
         }
         var allocation = await ValidateAllocationAsync(dto, id, cancellationToken);
         if (!allocation.IsSuccess)
@@ -121,22 +162,52 @@ public class TicketCategoryService(
 
     public async Task<Result> DeleteTicketCategoryAsync(int id, CancellationToken cancellationToken = default)
     {
+        if (!eventAccess.CanManage)
+        {
+            return Result.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+
+        var sourceEventId = await appDbContext.TicketCategories.AsNoTracking().Where(t => t.Id == id)
+            .Select(t => (int?)t.EventId).SingleOrDefaultAsync(cancellationToken);
+        if (!sourceEventId.HasValue)
+        {
+            return Result.NotFound(MissingCategory()).LogResult(logger);
+        }
+
+        await using var transaction = await appDbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await appDbContext.LockEventAsync(sourceEventId.Value, cancellationToken);
         var category = await appDbContext.TicketCategories.FindAsync(new object[] { id }, cancellationToken);
         if (category is null)
         {
             return Result.NotFound(MissingCategory()).LogResult(logger);
         }
+        if (category.EventId != sourceEventId.Value)
+        {
+            return Result.Conflict(new Error("TicketCategory.RetryRequired",
+                "The category moved during this request. Retry the operation.")).LogResult(logger);
+        }
+        var access = await eventAccess.CheckEventAsync(category.EventId, cancellationToken);
+        if (!access.IsSuccess)
+        {
+            return Result.Forbidden(EventAccess.Denied()).LogResult(logger);
+        }
+
+        if (await appDbContext.BookingItems.AnyAsync(i => i.TicketCategoryId == id, cancellationToken))
+        {
+            return Result.Conflict(new Error("TicketCategory.HasBookingHistory",
+                "Cannot delete a category with booking history.")).LogResult(logger);
+        }
 
         appDbContext.TicketCategories.Remove(category);
         await appDbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return Result.Success().LogResult(logger);
     }
 
-    private static Error[] ValidateInput(CreateTicketCategoryDto dto)
+    private static Error[] ValidateInput(CreateTicketCategoryDto dto, CancellationToken cancellationToken)
     {
-        var results = new List<ValidationResult>();
-        Validator.TryValidateObject(dto, new ValidationContext(dto), results, validateAllProperties: true);
-        var errors = results.Select(r => new Error("TicketCategory.InvalidInput", r.ErrorMessage!)).ToList();
+        var errors = DtoValidator.Validate(dto, "TicketCategory.InvalidInput", cancellationToken).ToList();
         if (dto.Price != decimal.Round(dto.Price, 2))
         {
             errors.Add(new Error("TicketCategory.PricePrecision", "Price must have at most two decimal places."));
@@ -148,6 +219,12 @@ public class TicketCategoryService(
     private async Task<Result> ValidateAllocationAsync(
         CreateTicketCategoryDto dto, int? categoryId, CancellationToken cancellationToken)
     {
+        var access = await eventAccess.CheckEventAsync(dto.EventId, cancellationToken);
+        if (!access.IsSuccess)
+        {
+            return access;
+        }
+
         var capacity = await appDbContext.Events.AsNoTracking().Where(e => e.Id == dto.EventId)
             .Select(e => (int?)e.Capacity).FirstOrDefaultAsync(cancellationToken);
         if (!capacity.HasValue)
@@ -168,9 +245,12 @@ public class TicketCategoryService(
     }
 
     private static Result<TicketCategoryDto> AllocationFailure(Result result) =>
-        result.FailureKind == FailureKind.NotFound
-            ? Result<TicketCategoryDto>.NotFound(result.Errors.ToArray())
-            : Result<TicketCategoryDto>.Conflict(result.Errors.ToArray());
+        result.FailureKind switch
+        {
+            FailureKind.NotFound => Result<TicketCategoryDto>.NotFound(result.Errors.ToArray()),
+            FailureKind.Forbidden => Result<TicketCategoryDto>.Forbidden(result.Errors.ToArray()),
+            _ => Result<TicketCategoryDto>.Conflict(result.Errors.ToArray())
+        };
 
     private static Error MissingCategory() => new("TicketCategory.NotFound", "Ticket category not found.");
 }
